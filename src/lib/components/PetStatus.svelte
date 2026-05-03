@@ -91,10 +91,14 @@
   .status {
     display: flex;
     align-items: center;
+    /* Wrap if items don't fit on a 360px-wide overlay so the close button is
+       never pushed off-screen. */
+    flex-wrap: wrap;
     gap: 6px;
+    row-gap: 4px;
     background: rgba(255, 255, 255, 0.94);
-    padding: 5px 8px;
-    border-radius: 999px;
+    padding: 6px 10px;
+    border-radius: 16px;
     box-shadow: 0 6px 18px rgba(0, 0, 0, 0.15);
     font-size: 11px;
     color: var(--mochi-text, #3a2b34);
@@ -129,11 +133,13 @@
     align-items: center;
     gap: 3px;
   }
-  .g-icon { font-size: 11px; line-height: 1; }
+  .g-icon { font-size: 12px; line-height: 1; }
   .g-track {
+    /* Wider so a 30→0 hunger drop or a 80→100 energy gain is visibly an
+       inch-and-a-half of bar movement, not a few pixels. */
     display: inline-block;
-    width: 26px;
-    height: 6px;
+    width: 44px;
+    height: 7px;
     background: rgba(0, 0, 0, 0.07);
     border-radius: 999px;
     overflow: hidden;
@@ -145,22 +151,24 @@
     transition: width 0.4s ease, background 0.4s ease;
   }
   .close {
-    margin-left: 4px;
-    width: 22px;
-    height: 22px;
+    /* Always sits at the end of the row; always visible. Slightly bigger
+       hitbox + faint pink tint so users can see + click it. */
+    margin-left: auto;
+    width: 26px;
+    height: 26px;
     border: 0;
     border-radius: 50%;
-    background: transparent;
-    font-size: 16px;
+    background: rgba(255, 220, 232, 0.55);
+    font-size: 17px;
     line-height: 1;
     color: var(--mochi-text, #3a2b34);
-    opacity: 0.55;
+    opacity: 0.85;
     cursor: pointer;
     transition: opacity 0.15s ease, background 0.15s ease;
   }
   .close:hover {
     opacity: 1;
-    background: rgba(0, 0, 0, 0.06);
+    background: rgba(255, 200, 225, 0.95);
   }
   .status-chip {
     display: inline-flex;

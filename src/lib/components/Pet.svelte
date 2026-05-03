@@ -411,12 +411,13 @@
   // CLOSED it shrinks to a small floating chip.
   function statusBox(): { left: number; top: number; right: number; bottom: number } {
     if (statusOpen) {
-      // Full-width-ish strip; height includes the pill plus a little slop.
+      // Full-width strip. Pill may wrap to two rows on narrow windows so the
+      // box is generous on height — pet stays comfortably below.
       return {
         left: 0,
         top: 0,
         right: viewportSize.width,
-        bottom: 48,
+        bottom: 80,
       };
     }
     // Closed chip — just the small top-left blob.
