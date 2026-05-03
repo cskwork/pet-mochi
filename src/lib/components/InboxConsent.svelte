@@ -52,6 +52,13 @@
       return;
     }
     if (e.key !== "Tab") return;
+    // While busy, both buttons are `disabled` and would be filtered out below,
+    // leaving the trap empty and Tab able to escape into the underlying pet UI.
+    // Block Tab unconditionally for the brief async window — focus stays put.
+    if (busy) {
+      e.preventDefault();
+      return;
+    }
     // Focus trap: cycle Tab/Shift+Tab among the dialog's focusable buttons so
     // keyboard users can't escape the alertdialog into the underlying pet UI.
     const order: Array<HTMLButtonElement | null> = [primaryBtn, secondaryBtn];
