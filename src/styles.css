@@ -76,6 +76,13 @@ body.settings-page {
   background: var(--mochi-cream);
 }
 
+/* Browser-only preview background so the cream sprite is visible outside the
+   transparent Tauri overlay window. */
+body.browser-preview {
+  background:
+    linear-gradient(135deg, #fff5f8 0%, #f3e9ee 100%);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
