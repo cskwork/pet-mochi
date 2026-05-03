@@ -57,6 +57,13 @@
   const HIT_TEST_MS = 80;
   const HIT_PAD = 8;
   const DRAG_THRESHOLD = 6;
+  // Stable estimate for bubble dimensions — placement is recomputed reactively
+  // but we don't measure the DOM (text changes would re-jitter the layout).
+  const BUBBLE_W = 220;
+  const BUBBLE_H = 64;
+  const BUBBLE_MARGIN = 8;
+  const BUBBLE_GAP = 10;
+  const TAIL_INSET = 18;
 
   function buildContext(): RuntimeContext {
     const dx = cursor.x - (position.x + petSize / 2);
@@ -304,9 +311,31 @@
     await handlePetClick();
   }
 
+  // Place the bubble above the pet by default; flip below if the top would
+  // clip the viewport. Always clamp horizontally so the bubble stays visible.
+  let bubblePlacement = $derived.by(() => {
+    const centerX = position.x + petSize / 2;
+    const aboveTop = position.y - BUBBLE_H - BUBBLE_GAP;
+    const placeBelow = aboveTop < BUBBLE_MARGIN;
+    const top = placeBelow ? position.y + petSize + BUBBLE_GAP : aboveTop;
+    let left = centerX - BUBBLE_W / 2;
+    left = Math.max(
+      BUBBLE_MARGIN,
+      Math.min(viewportSize.width - BUBBLE_W - BUBBLE_MARGIN, left),
+    );
+    const tailX = Math.max(TAIL_INSET, Math.min(BUBBLE_W - TAIL_INSET, centerX - left));
+    return { left, top, side: (placeBelow ? "below" : "above") as "above" | "below", tailX };
+  });
+
   function dockBox(): { left: number; top: number; right: number; bottom: number } {
-    const w = chatOpen ? 290 : 44;
-    const h = 44;
+    // Dock toggle is 44x44 anchored to bottom-right; when open, the panel
+    // stacks ABOVE the toggle (column layout) at ~260x76. Hit-test the union.
+    const toggleW = 44;
+    const toggleH = 44;
+    const panelW = chatOpen ? 260 : 0;
+    const panelH = chatOpen ? 76 : 0;
+    const w = Math.max(toggleW, panelW);
+    const h = toggleH + (chatOpen ? panelH + 6 : 0);
     return {
       left: viewportSize.width - w - 8,
       top: viewportSize.height - h - 8,
@@ -330,16 +359,15 @@
       y <= d.bottom + HIT_PAD
     ) return true;
     if (bubbleOpen) {
-      // Bubble anchor uses translate(-30%, -100%) on a max-width 220 box.
-      const bw = 240;
-      const bh = 80;
-      const ax = position.x + petSize;
-      const ay = position.y;
+      // Bubble is positioned absolutely at bubblePlacement.{left,top}; size is
+      // BUBBLE_W x BUBBLE_H. Hit-test that rect with HIT_PAD slop.
+      const bx = bubblePlacement.left;
+      const by = bubblePlacement.top;
       if (
-        x >= ax - 0.3 * bw &&
-        x <= ax + 0.7 * bw &&
-        y >= ay - bh &&
-        y <= ay
+        x >= bx - HIT_PAD &&
+        x <= bx + BUBBLE_W + HIT_PAD &&
+        y >= by - HIT_PAD &&
+        y <= by + BUBBLE_H + HIT_PAD
       ) return true;
     }
     return false;
@@ -483,12 +511,24 @@
   </button>
 
   {#if bubbleOpen && bubbleText}
-    <div class="bubble-anchor" style="left: {position.x + petSize}px; top: {position.y}px;">
-      <ChatBubble text={bubbleText} mood={pet.mood} />
+    <div
+      class="bubble-anchor"
+      style="left: {bubblePlacement.left}px; top: {bubblePlacement.top}px; --tail-x: {bubblePlacement.tailX}px;"
+      data-side={bubblePlacement.side}
+    >
+      <ChatBubble text={bubbleText} mood={pet.mood} side={bubblePlacement.side} />
     </div>
   {/if}
 
   <div class="dock" class:open={chatOpen}>
+    {#if chatOpen}
+      <div id="chat-dock-panel" class="dock-panel">
+        <ChatInput onSubmit={onSendMessage} />
+        <span class="dock-status" role="status" aria-live="polite">
+          {pet.mood} · ♥{pet.relationshipLevel}{saving ? " · saving" : ""}
+        </span>
+      </div>
+    {/if}
     <button
       class="dock-toggle"
       onclick={() => (chatOpen = !chatOpen)}
@@ -498,16 +538,6 @@
     >
       {chatOpen ? "×" : "💬"}
     </button>
-    {#if chatOpen}
-      <div id="chat-dock-panel" class="dock-panel">
-        <ChatInput onSubmit={onSendMessage} />
-        <div class="dock-actions">
-          <span class="dock-status" role="status" aria-live="polite">
-            {pet.mood} · ♥{pet.relationshipLevel}{saving ? " · saving" : ""}
-          </span>
-        </div>
-      </div>
-    {/if}
   </div>
 </div>
 
@@ -530,7 +560,7 @@
   }
   .bubble-anchor {
     position: absolute;
-    transform: translate(-30%, -100%);
+    width: 220px;
     pointer-events: auto;
   }
   .dock {
@@ -538,7 +568,8 @@
     right: 8px;
     bottom: 8px;
     display: flex;
-    align-items: center;
+    flex-direction: column;
+    align-items: flex-end;
     gap: 6px;
     pointer-events: auto;
   }
@@ -547,22 +578,25 @@
     height: 44px;
     border-radius: 50%;
     font-size: 18px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15);
   }
   .dock-panel {
     display: flex;
-    align-items: center;
+    flex-direction: column;
     gap: 6px;
+    align-items: stretch;
+    background: rgba(255, 255, 255, 0.94);
+    padding: 8px;
+    border-radius: 14px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+    min-width: 240px;
   }
   .dock-status {
-    background: rgba(255, 255, 255, 0.85);
-    padding: 4px 8px;
+    align-self: flex-start;
+    background: rgba(255, 220, 232, 0.65);
+    padding: 3px 8px;
     border-radius: 999px;
     font-size: 11px;
     color: var(--mochi-text);
-  }
-  .dock-actions {
-    display: flex;
-    align-items: center;
-    gap: 6px;
   }
 </style>
