@@ -15,6 +15,7 @@
     rememberNudge,
     newNudgeState,
     type ActionKey,
+    type AnimationStep,
     type NudgeState,
     type Obstacle,
     type PetState,
@@ -38,6 +39,11 @@
   // multiple boredom drops / animation overrides on the same tick.
   let busyAction = $state<ActionKey | null>(null);
   let busyTimer: ReturnType<typeof setTimeout> | undefined;
+  // While an action sequence is playing, the sim tick must NOT overwrite the
+  // animation — otherwise the chew/yawn frames flicker back to whatever the
+  // tick chose. The scheduler clears this flag on the last step.
+  let actionPlayingUntil = 0;
+  let actionStepTimers: ReturnType<typeof setTimeout>[] = [];
   let reporting = $state(false);
   // Which stat to briefly highlight in PetStatus after an action — gives the
   // user a visible cue even when the underlying value is already at cap.
@@ -173,7 +179,13 @@
       position = newPos;
     }
 
-    pet = next;
+    // While a tap-driven action sequence is mid-play, keep its animation pinned
+    // — let stat changes through but not the auto-derived animation override.
+    if (now < actionPlayingUntil) {
+      pet = { ...next, currentAnimation: pet.currentAnimation };
+    } else {
+      pet = next;
+    }
 
     // Spontaneous canned nudge if any mood threshold is crossed (priority +
     // cooldowns enforced inside `nextNudge`). LLM is intentionally not in this
@@ -181,8 +193,9 @@
     const nudge = nextNudge(pet, nudgeState, now);
     if (nudge) {
       flashBubble(`${pet.name}: ${nudge.bubble}`, 2_500);
-      if (nudge.animation) {
+      if (nudge.animation && now >= actionPlayingUntil) {
         // Override this tick's animation; the next tick re-derives from stats.
+        // Suppressed mid-action so the eat/yawn beats finish cleanly.
         pet = { ...pet, currentAnimation: nudge.animation };
       }
       nudgeState = rememberNudge(nudgeState, nudge, now);
@@ -262,13 +275,45 @@
     }, ms);
   }
 
+  function clearActionTimers() {
+    for (const t of actionStepTimers) clearTimeout(t);
+    actionStepTimers = [];
+  }
+
+  /** Walk through the action's animation steps over wall-clock time.
+   *  Sets the first frame immediately; schedules each subsequent frame. The
+   *  final frame is the resting pose (already in pet.currentAnimation), so we
+   *  just need to clear `actionPlayingUntil` when the sequence finishes. */
+  function playSteps(steps: AnimationStep[]) {
+    clearActionTimers();
+    if (steps.length === 0) return;
+    pet = { ...pet, currentAnimation: steps[0].animation };
+    let elapsed = 0;
+    for (let i = 0; i < steps.length; i++) {
+      elapsed += steps[i].durationMs;
+      // Schedule the *next* frame at the cumulative offset; the last entry's
+      // timer just clears the playing flag (its anim stays as the resting pose).
+      const isLast = i === steps.length - 1;
+      const nextAnim = isLast ? null : steps[i + 1].animation;
+      const timer = setTimeout(() => {
+        if (destroyed) return;
+        if (nextAnim) {
+          pet = { ...pet, currentAnimation: nextAnim };
+        }
+      }, elapsed);
+      actionStepTimers.push(timer);
+    }
+    actionPlayingUntil = Date.now() + elapsed;
+  }
+
   async function onAction(key: ActionKey) {
     if (busyAction === key) return;
     flashBusy(key);
     lastInteractionAt = Date.now();
     recentPositive = true;
-    const { state, bubble, eventType, salience } = applyAction(pet, key);
+    const { state, bubble, eventType, salience, steps } = applyAction(pet, key);
     pet = state;
+    playSteps(steps);
     // Pulse the affected gauge so the user sees the action register, even
     // if the stat was already at its cap.
     const statKey = ACTION_TO_STAT[key];
@@ -630,6 +675,7 @@
     if (busyTimer) clearTimeout(busyTimer);
     if (flashStatTimer) clearTimeout(flashStatTimer);
     if (hitTestTimer) clearInterval(hitTestTimer);
+    clearActionTimers();
     window.removeEventListener("resize", onResize);
     window.removeEventListener("pointermove", onPointerMove);
     if (unlistenInbox) unlistenInbox();

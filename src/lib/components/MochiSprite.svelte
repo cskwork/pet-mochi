@@ -25,8 +25,10 @@
 
   type FrameSrc = string | [string, string];
 
-  // walk/run hold a 2-frame pair that we swap on a timer to drive the
-  // step cycle independently from the CSS bob keyframe.
+  // walk/run/eat hold a 2-frame pair that we swap on a timer to drive the
+  // step / chew cycle independently from the CSS bob keyframe.
+  // eat_2 is a single still — the sequence scheduler in actions.ts alternates
+  // eat ↔ eat_2 itself to read as chewing, so we don't double-cycle here.
   const SRC: Record<MovementState, FrameSrc> = {
     idle: "/sprites/mochi-idle.png",
     walk: ["/sprites/mochi-walk-1.png", "/sprites/mochi-walk-2.png"],
@@ -37,6 +39,11 @@
     look_cursor: "/sprites/mochi-look-cursor.png",
     hide: "/sprites/mochi-hide.png",
     celebrate: "/sprites/mochi-celebrate.png",
+    eat: "/sprites/mochi-eat-1.png",
+    eat_2: "/sprites/mochi-eat-2.png",
+    yawn: "/sprites/mochi-yawn.png",
+    roll: "/sprites/mochi-roll.png",
+    blush: "/sprites/mochi-blush.png",
   };
 
   // Subtle CSS tint per mood so the same base PNG reads as a different state
@@ -98,6 +105,14 @@
     width={size}
     height={size}
     draggable="false"
+    onerror={(e) => {
+      // If a new pose PNG hasn't shipped yet (e.g., codex image-gen pending),
+      // fall back to the idle frame so the pet never shows a broken icon.
+      const img = e.currentTarget as HTMLImageElement;
+      if (img.src.indexOf("/sprites/mochi-idle.png") === -1) {
+        img.src = "/sprites/mochi-idle.png";
+      }
+    }}
   />
 
   {#if mood === "curious" && !isAsleep}
@@ -107,6 +122,18 @@
   {#if mood === "happy" && animation === "celebrate"}
     <div class="mark mark-heart-l" aria-hidden="true">♥</div>
     <div class="mark mark-heart-r" aria-hidden="true">♥</div>
+  {/if}
+
+  {#if animation === "blush"}
+    <div class="mark mark-heart-l" aria-hidden="true">♥</div>
+  {/if}
+
+  {#if animation === "yawn"}
+    <div class="mark mark-zzz" aria-hidden="true">~</div>
+  {/if}
+
+  {#if animation === "eat" || animation === "eat_2"}
+    <div class="mark mark-crumb" aria-hidden="true">·</div>
   {/if}
 </div>
 
@@ -153,6 +180,27 @@
 
   .mochi[data-anim="celebrate"] .sprite {
     animation: wiggle 0.6s ease-in-out infinite;
+  }
+
+  /* Munching = quick small vertical squash so the chew reads even on a still PNG. */
+  .mochi[data-anim="eat"] .sprite,
+  .mochi[data-anim="eat_2"] .sprite {
+    animation: chew 0.32s ease-in-out infinite;
+  }
+
+  /* Yawning = slow stretch upward. */
+  .mochi[data-anim="yawn"] .sprite {
+    animation: yawnStretch 1.2s ease-in-out infinite;
+  }
+
+  /* Rolling = continuous tilt, paired with the side-rolled sprite. */
+  .mochi[data-anim="roll"] .sprite {
+    animation: rollSpin 0.7s linear infinite;
+  }
+
+  /* Pat reaction: tiny lean forward. */
+  .mochi[data-anim="blush"] .sprite {
+    animation: leanIn 0.7s ease-in-out infinite;
   }
 
   @keyframes breathe {
@@ -205,6 +253,48 @@
     }
   }
 
+  @keyframes chew {
+    0%,
+    100% {
+      transform: scaleX(var(--scale-x)) scale(1, 1);
+    }
+    50% {
+      transform: scaleX(var(--scale-x)) scale(1.04, 0.94);
+    }
+  }
+
+  @keyframes yawnStretch {
+    0%,
+    100% {
+      transform: scaleX(var(--scale-x)) scale(1, 1) translateY(0);
+    }
+    50% {
+      transform: scaleX(var(--scale-x)) scale(1.03, 1.06) translateY(-3px);
+    }
+  }
+
+  @keyframes rollSpin {
+    0% {
+      transform: scaleX(var(--scale-x)) rotate(-12deg) translateX(-3px);
+    }
+    50% {
+      transform: scaleX(var(--scale-x)) rotate(12deg) translateX(3px);
+    }
+    100% {
+      transform: scaleX(var(--scale-x)) rotate(-12deg) translateX(-3px);
+    }
+  }
+
+  @keyframes leanIn {
+    0%,
+    100% {
+      transform: scaleX(var(--scale-x)) translateY(0) rotate(-2deg);
+    }
+    50% {
+      transform: scaleX(var(--scale-x)) translateY(2px) rotate(2deg);
+    }
+  }
+
   .mark {
     position: absolute;
     pointer-events: none;
@@ -236,6 +326,22 @@
     animation: float 1.8s ease-in-out infinite 0.3s;
   }
 
+  .mark-zzz {
+    top: 4%;
+    right: 12%;
+    color: #6b9fc4;
+    font-size: calc(var(--size) * 0.18);
+    animation: float 1.6s ease-in-out infinite;
+  }
+
+  .mark-crumb {
+    top: 56%;
+    left: 18%;
+    color: #d27ba1;
+    font-size: calc(var(--size) * 0.18);
+    animation: float 1.1s ease-in-out infinite 0.1s;
+  }
+
   @keyframes pop {
     0%,
     100% {
@@ -265,6 +371,11 @@
     .mochi[data-anim="run"] .sprite,
     .mochi[data-anim="jump"] .sprite,
     .mochi[data-anim="celebrate"] .sprite,
+    .mochi[data-anim="eat"] .sprite,
+    .mochi[data-anim="eat_2"] .sprite,
+    .mochi[data-anim="yawn"] .sprite,
+    .mochi[data-anim="roll"] .sprite,
+    .mochi[data-anim="blush"] .sprite,
     .mark {
       animation: none !important;
     }

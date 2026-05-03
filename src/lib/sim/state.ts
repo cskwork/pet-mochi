@@ -24,7 +24,12 @@ export type MovementState =
   | "sit"
   | "look_cursor"
   | "hide"
-  | "celebrate";
+  | "celebrate"
+  | "eat"
+  | "eat_2"
+  | "yawn"
+  | "roll"
+  | "blush";
 
 export type PetState = {
   id: string;
