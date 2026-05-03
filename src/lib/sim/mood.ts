@@ -10,6 +10,5 @@ export function deriveMood(state: PetState): Mood {
   if (state.boredom > 70) return "bored";
   if (state.affection < 20) return "lonely";
   if (state.curiosity > 70) return "curious";
-  if (state.stress > 65) return "focused";
   return "happy";
 }

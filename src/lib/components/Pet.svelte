@@ -2,9 +2,11 @@
   import { onMount, onDestroy } from "svelte";
   import MochiSprite from "./MochiSprite.svelte";
   import ChatBubble from "./ChatBubble.svelte";
+  import InboxConsent from "./InboxConsent.svelte";
   import PetActions from "./PetActions.svelte";
   import PetStatus from "./PetStatus.svelte";
   import {
+    computeAwayMinutes,
     deriveTimeOfDay,
     nextWanderPosition,
     findSafeStartPosition,
@@ -24,6 +26,7 @@
   import { api } from "../bridge/api";
   import { listen } from "../bridge/tauri";
   import { eventBus } from "../events/bus";
+  import { tryEnterAutonomous, type LastAutonomous } from "./autonomousGate";
   import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
 
   type Props = { petSize?: number };
@@ -34,6 +37,10 @@
   let cursor = $state({ x: 0, y: 0 });
   let bubbleText = $state<string | null>(null);
   let bubbleOpen = $state(false);
+  // Pending inbox files awaiting user consent. Index 0 is the active prompt;
+  // newer files queue behind it. Deduped on push so a file emitted twice
+  // (initial scan + watcher event) shows up only once.
+  let inboxQueue = $state<string[]>([]);
   let blink = $state(false);
   // Briefly disable a button right after it fires so a double-tap can't stack
   // multiple boredom drops / animation overrides on the same tick.
@@ -76,7 +83,10 @@
   let hitTestTimer: ReturnType<typeof setInterval> | undefined;
   let unlistenInbox: (() => void) | null = null;
   let unsubscribeBus: (() => void) | null = null;
-  let lastAutonomousFor: { kind: string; ts: number } | null = null;
+  let lastAutonomousFor: LastAutonomous = null;
+  // Blocks a second invocation while one is mid-flight, in addition to the
+  // (kind, ts) cooldown window. See autonomousGate.ts for rationale.
+  let autonomousInFlight = false;
   let destroyed = false;
   let clickThroughOn = false;
   let cachedScaleFactor = 1;
@@ -121,11 +131,10 @@
       pet = remote;
       // Restore the last interaction wall-clock so userJustReturned / awayMinutes
       // are accurate immediately after restart instead of waiting 30 minutes.
-      if (remote.lastInteractionAt) {
-        const t = Date.parse(remote.lastInteractionAt);
-        if (!Number.isNaN(t)) {
-          lastInteractionAt = t;
-        }
+      const now = Date.now();
+      const minsAway = computeAwayMinutes(remote.lastInteractionAt, now);
+      if (minsAway !== null) {
+        lastInteractionAt = now - minsAway * 60_000;
       }
     } catch (err) {
       console.warn("getPetState failed", err);
@@ -235,18 +244,52 @@
     }, ms);
   }
 
+  /** Add a file to the consent queue, ignoring duplicates so the watcher's
+   *  initial scan + a later modify event don't double-prompt. */
+  function enqueueInboxFile(name: string) {
+    if (!name) return;
+    if (inboxQueue.includes(name)) return;
+    inboxQueue = [...inboxQueue, name];
+  }
+
+  function dropFromInboxQueue(name: string) {
+    const idx = inboxQueue.indexOf(name);
+    if (idx === -1) return;
+    inboxQueue = [...inboxQueue.slice(0, idx), ...inboxQueue.slice(idx + 1)];
+  }
+
+  async function onInboxApprove(name: string): Promise<void> {
+    // The component owns the in-flight flag; we just call the API and let
+    // errors propagate so the consent prompt can surface them.
+    const summary = await api.approveFile(name);
+    dropFromInboxQueue(name);
+    flashBubble(`${pet.name}: ${summary}`, 6_000);
+  }
+
+  function onInboxSkip(): void {
+    // No backend reject — just dismiss locally. The file stays on disk and
+    // unapproved, which is the safe default per REQ-084.
+    if (inboxQueue.length === 0) return;
+    inboxQueue = inboxQueue.slice(1);
+  }
+
   async function maybeAutonomousSpeak(kind: string, awayMinutes: number) {
     // Local cooldown so a single dispatched event doesn't hammer the backend
     // every tick. The backend has its own LLM cooldown as a backstop.
-    const now = Date.now();
-    if (
-      lastAutonomousFor &&
-      lastAutonomousFor.kind === kind &&
-      now - lastAutonomousFor.ts < AUTONOMOUS_LOCAL_COOLDOWN_MS
-    ) {
-      return;
-    }
-    lastAutonomousFor = { kind, ts: now };
+    // The `autonomousInFlight` guard additionally blocks any concurrent
+    // re-entry while the previous request is still pending.
+    const decision = tryEnterAutonomous({
+      inFlight: autonomousInFlight,
+      last: lastAutonomousFor,
+      kind,
+      now: Date.now(),
+      cooldownMs: AUTONOMOUS_LOCAL_COOLDOWN_MS,
+    });
+    if (!decision.proceed) return;
+    // Consume the cooldown *before* awaiting so a failed call still throttles
+    // the next attempt — otherwise every event in the window would retry.
+    lastAutonomousFor = decision.nextLast;
+    autonomousInFlight = true;
     try {
       const reply = await api.autonomousSpeak(kind, awayMinutes);
       if (reply && reply.text) {
@@ -259,6 +302,8 @@
       }
     } catch {
       // Autonomous speech is best-effort; failure is silent.
+    } finally {
+      autonomousInFlight = false;
     }
   }
 
@@ -458,6 +503,35 @@
     return { left, top, side: (placeBelow ? "below" : "above") as "above" | "below", tailX };
   });
 
+  // Consent prompt placement. Try below the pet first; flip above if there's
+  // no room (e.g., the pet is near the bottom of the viewport). Avoids the
+  // status strip and actions panel obstacles, then clamps to the viewport.
+  const CONSENT_W = 250;
+  const CONSENT_H = 140;
+  const CONSENT_GAP = 10;
+  const CONSENT_MARGIN = 8;
+  let consentPlacement = $derived.by(() => {
+    const status = statusBox();
+    const actions = actionsBox();
+    const topClear = Math.max(CONSENT_MARGIN, status.bottom + CONSENT_GAP);
+    const bottomClear = Math.min(
+      viewportSize.height - CONSENT_MARGIN,
+      actions.top - CONSENT_GAP,
+    );
+    const belowTop = position.y + petSize + CONSENT_GAP;
+    const aboveTop = position.y - CONSENT_H - CONSENT_GAP;
+    let top: number;
+    if (belowTop + CONSENT_H <= bottomClear) top = belowTop;
+    else if (aboveTop >= topClear) top = aboveTop;
+    else top = Math.max(topClear, bottomClear - CONSENT_H);
+    let left = position.x + petSize / 2 - CONSENT_W / 2;
+    left = Math.max(
+      CONSENT_MARGIN,
+      Math.min(viewportSize.width - CONSENT_W - CONSENT_MARGIN, left),
+    );
+    return { left, top };
+  });
+
   // Action panel sits bottom-right; estimate generously so the hit-test slop
   // forgives margin/padding/font drift without mis-classifying the cursor.
   // Width grew to accommodate the 5th (Report) button + divider.
@@ -551,6 +625,18 @@
         x <= bx + BUBBLE_W + HIT_PAD &&
         y >= by - HIT_PAD &&
         y <= by + BUBBLE_H + HIT_PAD
+      ) return true;
+    }
+    if (inboxQueue.length > 0) {
+      // Consent dialog is interactive — buttons must receive clicks even when
+      // the rest of the overlay is click-through.
+      const cx = consentPlacement.left;
+      const cy = consentPlacement.top;
+      if (
+        x >= cx - HIT_PAD &&
+        x <= cx + CONSENT_W + HIT_PAD &&
+        y >= cy - HIT_PAD &&
+        y <= cy + CONSENT_H + HIT_PAD
       ) return true;
     }
     return false;
@@ -651,7 +737,7 @@
         unlistenInbox = await listen<{ name: string }>(
           "inbox:file-found",
           (payload) => {
-            flashBubble(`📨 found ${payload.name} — open Settings to approve`, 6_000);
+            enqueueInboxFile(payload.name);
             api
               .logEvent("FILE_FOUND_IN_INBOX", payload.name, 55)
               .catch(() => undefined);
@@ -717,6 +803,22 @@
     </div>
   {/if}
 
+  {#if inboxQueue.length > 0}
+    {#key inboxQueue[0]}
+      <div
+        class="consent-anchor"
+        style="left: {consentPlacement.left}px; top: {consentPlacement.top}px; width: {CONSENT_W}px;"
+      >
+        <InboxConsent
+          fileName={inboxQueue[0]}
+          onApprove={onInboxApprove}
+          onSkip={onInboxSkip}
+          remaining={inboxQueue.length - 1}
+        />
+      </div>
+    {/key}
+  {/if}
+
   <div class="status-anchor">
     <PetStatus {pet} {saving} open={statusOpen} onToggle={toggleStatus} {flashedStat} />
   </div>
@@ -747,6 +849,11 @@
     position: absolute;
     width: 220px;
     pointer-events: auto;
+  }
+  .consent-anchor {
+    position: absolute;
+    pointer-events: auto;
+    z-index: 5;
   }
   .status-anchor {
     position: absolute;
