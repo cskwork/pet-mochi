@@ -4,3 +4,5 @@ export * from "./mood";
 export * from "./movement";
 export * from "./salience";
 export * from "./tick";
+export * from "./actions";
+export * from "./nudges";
