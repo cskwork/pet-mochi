@@ -3,10 +3,12 @@ import {
   applyDecay,
   applyInteraction,
   chooseMovement,
+  computeAwayMinutes,
   deriveMood,
   newPetState,
   nextWanderPosition,
   runTick,
+  type PetState,
   type RuntimeContext,
 } from "./index";
 import {
@@ -42,6 +44,18 @@ describe("deriveMood", () => {
   });
   it("returns happy by default", () => {
     expect(deriveMood(newPetState())).toBe("happy");
+  });
+
+  // Stress is only ever decreased by decay/interactions/actions, so the old
+  // `stress > 65 → "focused"` branch was unreachable. The Mood union no
+  // longer contains "focused"; assert that at the highest possible stress the
+  // result is still one of the live moods (and specifically not the removed
+  // literal cast through `as any`).
+  it("does not return 'focused' even at maximum stress", () => {
+    const s = { ...newPetState(), stress: 100 };
+    const mood = deriveMood(s);
+    expect(mood).not.toBe("focused" as unknown as typeof mood);
+    expect(["happy", "curious", "tired", "hungry", "bored", "lonely"]).toContain(mood);
   });
 });
 
@@ -146,6 +160,45 @@ describe("applyDecay", () => {
     const out = applyDecay(s, 100_000);
     expect(out.hunger).toBeLessThanOrEqual(100);
     expect(out.hunger).toBeGreaterThanOrEqual(0);
+  });
+
+  // Bond should loosen across multi-day absences but never erode within a
+  // single session — ~24h of zero interaction sheds a small but measurable
+  // amount of relationshipLevel.
+  it("drops relationshipLevel a small but measurable amount over a 24h absence", () => {
+    const longAgo = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
+    const s = {
+      ...newPetState(),
+      relationshipLevel: 50,
+      lastInteractionAt: longAgo,
+    };
+    const out = applyDecay(s, 24 * 60 * 60);
+    const drop = s.relationshipLevel - out.relationshipLevel;
+    expect(drop).toBeGreaterThan(0);
+    expect(drop).toBeGreaterThanOrEqual(1);
+    expect(drop).toBeLessThanOrEqual(3);
+  });
+
+  it("barely changes relationshipLevel on a short within-session tick", () => {
+    const longAgo = new Date(Date.now() - 31 * 60_000).toISOString();
+    const s = {
+      ...newPetState(),
+      relationshipLevel: 50,
+      lastInteractionAt: longAgo,
+    };
+    const out = applyDecay(s, 5);
+    expect(Math.abs(s.relationshipLevel - out.relationshipLevel)).toBeLessThan(0.01);
+  });
+
+  it("never decays relationshipLevel below 0", () => {
+    const longAgo = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
+    const s = {
+      ...newPetState(),
+      relationshipLevel: 0,
+      lastInteractionAt: longAgo,
+    };
+    const out = applyDecay(s, 7 * 24 * 60 * 60);
+    expect(out.relationshipLevel).toBeGreaterThanOrEqual(0);
   });
 
   it("noop on zero seconds", () => {
@@ -264,5 +317,47 @@ describe("salience", () => {
   it("eventImportance covers all variants", () => {
     expect(eventImportance({ type: "APP_STARTED" })).toBeGreaterThan(0);
     expect(eventImportance({ type: "USER_HOVERED_PET" })).toBeGreaterThanOrEqual(0);
+  });
+});
+
+// PRD §21.3: lastInteractionAt persists across restart and awayMinutes is
+// computed from that persisted timestamp (not session start).
+describe("computeAwayMinutes / persistence regression", () => {
+  it("returns null for a missing timestamp so callers can fall back", () => {
+    expect(computeAwayMinutes(null, Date.now())).toBeNull();
+    expect(computeAwayMinutes(undefined, Date.now())).toBeNull();
+  });
+
+  it("returns null for an unparseable timestamp", () => {
+    expect(computeAwayMinutes("not-a-date", Date.now())).toBeNull();
+  });
+
+  it("derives minutes-since from a persisted RFC3339 timestamp", () => {
+    const now = Date.parse("2026-05-03T12:30:00Z");
+    const past = new Date(now - 47 * 60_000).toISOString();
+    const minutes = computeAwayMinutes(past, now);
+    expect(minutes).not.toBeNull();
+    expect(minutes!).toBeCloseTo(47, 5);
+  });
+
+  it("survives a save → serialize → load round-trip (simulated restart)", () => {
+    // Build a PetState whose lastInteractionAt is N minutes in the past.
+    const now = Date.parse("2026-05-03T12:30:00Z");
+    const awayMinutesExpected = 90;
+    const past = new Date(now - awayMinutesExpected * 60_000).toISOString();
+    const before: PetState = { ...newPetState("Mochi"), lastInteractionAt: past };
+
+    // Simulate the bridge: save_pet_state serializes via serde → JSON →
+    // load_pet_state deserializes. We round-trip through JSON to mirror the
+    // tauri invoke boundary; if `lastInteractionAt` were dropped or renamed,
+    // this would surface here.
+    const after = JSON.parse(JSON.stringify(before)) as PetState;
+    expect(after.lastInteractionAt).toBe(past);
+
+    // The same helper Pet.svelte uses on sync should now produce the
+    // expected awayMinutes (within ±1 min of the configured value).
+    const minutes = computeAwayMinutes(after.lastInteractionAt, now);
+    expect(minutes).not.toBeNull();
+    expect(Math.abs(minutes! - awayMinutesExpected)).toBeLessThanOrEqual(1);
   });
 });

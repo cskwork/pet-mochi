@@ -279,10 +279,8 @@ impl Db {
             "SELECT id, type, content, importance, confidence, source_interaction_id, created_at, last_accessed_at, decay_score
              FROM memories ORDER BY created_at DESC LIMIT ?1",
         )?;
-        let rows = stmt
-            .query_map(params![limit], map_memory)?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(rows)
+        let iter = stmt.query_map(params![limit], map_memory)?;
+        Ok(collect_tolerant(iter, "memories"))
     }
 
     /// Retrieve relevant memories blending FTS text relevance with recency and importance.
@@ -303,9 +301,8 @@ impl Db {
              ORDER BY rank
              LIMIT ?2",
         )?;
-        let mut rows = stmt
-            .query_map(params![fts_query, limit * 2], map_memory)?
-            .collect::<Result<Vec<_>, _>>()?;
+        let iter = stmt.query_map(params![fts_query, limit * 2], map_memory)?;
+        let mut rows = collect_tolerant(iter, "memories");
 
         // If FTS yields nothing, fall back to LIKE on content for partial matches.
         if rows.is_empty() {
@@ -314,9 +311,8 @@ impl Db {
                 "SELECT id, type, content, importance, confidence, source_interaction_id, created_at, last_accessed_at, decay_score
                  FROM memories WHERE content LIKE ?1 ORDER BY created_at DESC LIMIT ?2",
             )?;
-            rows = alt
-                .query_map(params![like, limit], map_memory)?
-                .collect::<Result<Vec<_>, _>>()?;
+            let alt_iter = alt.query_map(params![like, limit], map_memory)?;
+            rows = collect_tolerant(alt_iter, "memories");
         }
 
         rows.sort_by(|a, b| {
@@ -372,10 +368,8 @@ impl Db {
             "SELECT id, event_type, user_input, pet_response, mood, state_snapshot_json, created_at
              FROM interactions ORDER BY created_at DESC LIMIT ?1",
         )?;
-        let rows = stmt
-            .query_map(params![limit], map_interaction)?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(rows)
+        let iter = stmt.query_map(params![limit], map_interaction)?;
+        Ok(collect_tolerant(iter, "interactions"))
     }
 
     /// Interactions whose `created_at` is between `start` and `end` (inclusive).
@@ -389,10 +383,8 @@ impl Db {
              WHERE created_at >= ?1 AND created_at <= ?2
              ORDER BY created_at DESC LIMIT ?3",
         )?;
-        let rows = stmt
-            .query_map(params![start, end, limit], map_interaction)?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(rows)
+        let iter = stmt.query_map(params![start, end, limit], map_interaction)?;
+        Ok(collect_tolerant(iter, "interactions"))
     }
 
     // ------- Daily reflections -------
@@ -460,19 +452,17 @@ impl Db {
             "SELECT id, event_type, payload_json, salience, handled, created_at
              FROM event_log ORDER BY created_at DESC LIMIT ?1",
         )?;
-        let rows = stmt
-            .query_map(params![limit], |row| {
-                Ok(EventLogEntry {
-                    id: row.get(0)?,
-                    event_type: row.get(1)?,
-                    payload_json: row.get(2)?,
-                    salience: row.get(3)?,
-                    handled: row.get::<_, i64>(4)? != 0,
-                    created_at: row.get(5)?,
-                })
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(rows)
+        let iter = stmt.query_map(params![limit], |row| {
+            Ok(EventLogEntry {
+                id: row.get(0)?,
+                event_type: row.get(1)?,
+                payload_json: row.get(2)?,
+                salience: row.get(3)?,
+                handled: row.get::<_, i64>(4)? != 0,
+                created_at: row.get(5)?,
+            })
+        })?;
+        Ok(collect_tolerant(iter, "event_log"))
     }
 
     // ------- Skills -------
@@ -503,19 +493,17 @@ impl Db {
         let mut stmt = conn.prepare(
             "SELECT id, name, description, permissions_json, enabled, created_at FROM skills ORDER BY name",
         )?;
-        let rows = stmt
-            .query_map([], |row| {
-                Ok(Skill {
-                    id: row.get(0)?,
-                    name: row.get(1)?,
-                    description: row.get(2)?,
-                    permissions_json: row.get(3)?,
-                    enabled: row.get::<_, i64>(4)? != 0,
-                    created_at: row.get(5)?,
-                })
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(rows)
+        let iter = stmt.query_map([], |row| {
+            Ok(Skill {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                description: row.get(2)?,
+                permissions_json: row.get(3)?,
+                enabled: row.get::<_, i64>(4)? != 0,
+                created_at: row.get(5)?,
+            })
+        })?;
+        Ok(collect_tolerant(iter, "skills"))
     }
 
     // ------- Settings -------
@@ -542,6 +530,32 @@ impl Db {
         conn.execute("DELETE FROM settings WHERE key = ?1", params![key])?;
         Ok(())
     }
+}
+
+/// Collect rows from a `query_map` iterator, skipping any individual rows that
+/// fail to decode (e.g. a corrupt cell with a wrong-type value, or NULL where a
+/// non-null type is expected). Connection-level / query-level errors are caught
+/// upstream by the `?` on `query_map`; only per-row decode failures are tolerated
+/// here. PRD §10.2: corrupt records must be ignored or repairable.
+fn collect_tolerant<I, T>(iter: I, table: &str) -> Vec<T>
+where
+    I: IntoIterator<Item = rusqlite::Result<T>>,
+{
+    let mut out = Vec::new();
+    let mut skipped = 0_usize;
+    for row in iter {
+        match row {
+            Ok(v) => out.push(v),
+            Err(e) => {
+                skipped += 1;
+                log::warn!("skipping corrupt row in {}: {}", table, e);
+            }
+        }
+    }
+    if skipped > 0 {
+        log::warn!("skipped {} corrupt row(s) loading {}", skipped, table);
+    }
+    out
 }
 
 fn map_interaction(row: &rusqlite::Row<'_>) -> rusqlite::Result<Interaction> {
@@ -619,6 +633,63 @@ mod tests {
         assert_eq!(loaded.energy, 80);
     }
 
+    /// PRD §21.3 acceptance: `last_interaction_at` must survive a process
+    /// restart and the derived "away minutes" must be computed from that
+    /// persisted timestamp, not from session start.
+    ///
+    /// Simulates a restart by saving to a tempdir DB, dropping the Db (which
+    /// closes the rusqlite Connection), and re-opening at the same path.
+    #[test]
+    fn last_interaction_at_persists_across_restart_and_drives_away_minutes() {
+        use chrono::Duration;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("mochi.sqlite");
+
+        // Pretend the user last interacted 90 minutes ago.
+        let away_minutes_expected: i64 = 90;
+        let saved_at = Utc::now() - Duration::minutes(away_minutes_expected);
+        let saved_at_iso = saved_at.to_rfc3339();
+
+        // --- Pre-restart: save a state with last_interaction_at set ---
+        {
+            let db = Db::open(&db_path).unwrap();
+            let mut state = PetState::new("Mochi");
+            state.id = "default".to_string();
+            state.last_interaction_at = Some(saved_at_iso.clone());
+            db.save_pet_state(&state).unwrap();
+            // db drops here, closing the connection.
+        }
+
+        // --- Post-restart: re-open and verify the timestamp survived ---
+        let db = Db::open(&db_path).unwrap();
+        let loaded = db
+            .load_pet_state("default")
+            .unwrap()
+            .expect("pet state must be present after restart");
+
+        assert_eq!(
+            loaded.last_interaction_at.as_deref(),
+            Some(saved_at_iso.as_str()),
+            "last_interaction_at must round-trip byte-for-byte"
+        );
+
+        // Compute away minutes from the persisted timestamp the same way the
+        // app would (parse + diff against now).
+        let parsed = parse_timestamp(loaded.last_interaction_at.as_deref().unwrap())
+            .expect("persisted timestamp must parse as RFC3339");
+        let away_minutes = (Utc::now() - parsed).num_seconds() as f64 / 60.0;
+
+        let drift = (away_minutes - away_minutes_expected as f64).abs();
+        assert!(
+            drift <= 1.0,
+            "away minutes derived from persisted timestamp should be ~{} (got {:.3}, drift {:.3})",
+            away_minutes_expected,
+            away_minutes,
+            drift,
+        );
+    }
+
     #[test]
     fn memory_create_and_search() {
         let db = fresh();
@@ -692,5 +763,158 @@ mod tests {
         db.log_event("USER_CLICKED_PET", Some("{}"), Some(20)).unwrap();
         let recent = db.recent_events(10).unwrap();
         assert_eq!(recent.len(), 2);
+    }
+
+    /// PRD §10.2: a single corrupt memory row must not abort the whole load.
+    /// We insert one well-formed row and one row whose `importance` cell holds a
+    /// non-numeric string, which fails rusqlite's `i32` decoding for that row only.
+    #[test]
+    fn list_memories_skips_corrupt_rows() {
+        let db = fresh();
+        // Well-formed row via the normal API.
+        db.create_memory(NewMemory {
+            r#type: "preference".into(),
+            content: "good row".into(),
+            importance: Some(5),
+            confidence: Some(0.9),
+            source_interaction_id: None,
+        })
+        .unwrap();
+
+        // Corrupt row: bypass the API and stuff a non-numeric string into the
+        // INTEGER column (SQLite is dynamically typed, so it stores it as TEXT).
+        {
+            let conn = db.conn.lock();
+            conn.execute(
+                "INSERT INTO memories (id, type, content, importance, confidence, source_interaction_id, created_at, last_accessed_at, decay_score)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![
+                    "corrupt-1",
+                    "preference",
+                    "bad row",
+                    "not-a-number",   // wrong type for i32
+                    0.5_f32,
+                    Option::<String>::None,
+                    "2024-01-01T00:00:00Z",
+                    "2024-01-01T00:00:00Z",
+                    1.0_f32,
+                ],
+            ).unwrap();
+        }
+
+        // Loader must succeed and return only the well-formed row.
+        let rows = db.list_memories(10).expect("loader must not error on corrupt row");
+        assert_eq!(rows.len(), 1, "exactly the good row should survive");
+        assert_eq!(rows[0].content, "good row");
+
+        // search_memories shares the same tolerance path (fallback LIKE branch
+        // when FTS misses). The corrupt row was indexed by the FTS trigger, so
+        // a query that matches "bad" should still return zero rows without
+        // erroring; "good" should return exactly the good row.
+        let bad_search = db.search_memories("bad", 10).expect("must not error");
+        assert!(
+            bad_search.iter().all(|m| m.content != "bad row"),
+            "corrupt row must never be returned"
+        );
+        let good_search = db.search_memories("good", 10).expect("must not error");
+        assert_eq!(good_search.len(), 1);
+        assert_eq!(good_search[0].content, "good row");
+    }
+
+    /// Same shape for interactions: insert one good + one with non-string `id`
+    /// (NULL where the struct expects `String`), loader returns the good row only.
+    #[test]
+    fn recent_interactions_skips_corrupt_rows() {
+        let db = fresh();
+        db.create_interaction(NewInteraction {
+            event_type: "chat".into(),
+            user_input: Some("hi".into()),
+            pet_response: Some("hello".into()),
+            mood: Some("happy".into()),
+            state_snapshot_json: Some("{\"ok\":true}".into()),
+        })
+        .unwrap();
+
+        // Corrupt row: NULL id where the model declares `id: String` (non-Option).
+        {
+            let conn = db.conn.lock();
+            conn.execute(
+                "INSERT INTO interactions (id, event_type, user_input, pet_response, mood, state_snapshot_json, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    Option::<String>::None,  // NULL where String is required
+                    "chat",
+                    Option::<String>::None,
+                    Option::<String>::None,
+                    Option::<String>::None,
+                    "{not valid json",  // also malformed JSON, but we don't parse it
+                    "2024-01-01T00:00:00Z",
+                ],
+            ).unwrap();
+        }
+
+        let rows = db.recent_interactions(10).expect("loader must not error");
+        assert_eq!(rows.len(), 1, "only the well-formed interaction survives");
+        assert_eq!(rows[0].user_input.as_deref(), Some("hi"));
+    }
+
+    /// Event log: NULL `handled` column where the loader expects an `i64`.
+    /// (`event_type` is NOT NULL at the schema level, so we corrupt the
+    /// `handled` cell instead — this still hits the per-row decode failure path.)
+    #[test]
+    fn recent_events_skips_corrupt_rows() {
+        let db = fresh();
+        db.log_event("APP_STARTED", None, Some(50)).unwrap();
+        {
+            let conn = db.conn.lock();
+            conn.execute(
+                "INSERT INTO event_log (id, event_type, payload_json, salience, handled, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    "evt-corrupt",
+                    "BAD_EVENT",
+                    "{not json",            // we don't parse this column; harmless
+                    Option::<i32>::None,
+                    Option::<i64>::None,    // NULL where i64 is required
+                    "2024-01-01T00:00:00Z",
+                ],
+            ).unwrap();
+        }
+        let rows = db.recent_events(10).expect("loader must not error");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].event_type, "APP_STARTED");
+    }
+
+    /// Skills loader: NULL `enabled` column where the loader expects an `i64`.
+    /// (`permissions_json` is NOT NULL at the schema level.)
+    #[test]
+    fn list_skills_skips_corrupt_rows() {
+        let db = fresh();
+        db.upsert_skill(&Skill {
+            id: "skill-1".into(),
+            name: "Notes".into(),
+            description: Some("write notes".into()),
+            permissions_json: "[]".into(),
+            enabled: true,
+            created_at: "2024-01-01T00:00:00Z".into(),
+        }).unwrap();
+        {
+            let conn = db.conn.lock();
+            conn.execute(
+                "INSERT INTO skills (id, name, description, permissions_json, enabled, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    "skill-corrupt",
+                    "Bad",
+                    Option::<String>::None,
+                    "{not valid",          // permissions_json is opaque text, not parsed at load
+                    Option::<i64>::None,   // NULL where i64 is required → per-row decode fails
+                    "2024-01-01T00:00:00Z",
+                ],
+            ).unwrap();
+        }
+        let rows = db.list_skills().expect("loader must not error");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].name, "Notes");
     }
 }

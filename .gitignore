@@ -34,3 +34,7 @@ codex-review-out.txt
 codex-uiux-out.txt
 codex-uiux-prompt.md
 .codex-*
+
+# Local agent / shell crash artifacts
+.claude/
+*.stackdump

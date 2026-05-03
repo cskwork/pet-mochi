@@ -55,7 +55,6 @@
     hungry: "hue-rotate(-22deg) saturate(1.18)",
     bored: "saturate(0.45) brightness(0.97)",
     lonely: "hue-rotate(40deg) saturate(0.78) brightness(0.95)",
-    focused: "hue-rotate(70deg) saturate(0.85)",
   };
 
   let frameIdx = $state(0);

@@ -32,6 +32,15 @@ export function applyDecay(state: PetState, elapsedSeconds: number): PetState {
     : Infinity;
   const dAffection = minutesSince > 30 ? -0.05 * elapsedSeconds : 0;
 
+  // Bond loosening — relationshipLevel drifts down across days of neglect, not
+  // minutes. Tuned so 24h of zero interaction sheds ~2 points; a 60s tick
+  // changes it by ~0.0014, well below visible-rounding so within-session feel
+  // is untouched. Same 30-min idle gate as affection so casual use doesn't
+  // even start the slow drift.
+  const dRelationship = minutesSince > 30
+    ? -(2 / 86_400) * elapsedSeconds
+    : 0;
+
   return {
     ...state,
     hunger: clamp(state.hunger + dHunger),
@@ -40,6 +49,7 @@ export function applyDecay(state: PetState, elapsedSeconds: number): PetState {
     curiosity: clamp(state.curiosity + dCuriosity),
     stress: clamp(state.stress + dStress),
     affection: clamp(state.affection + dAffection),
+    relationshipLevel: clamp(state.relationshipLevel + dRelationship),
     updatedAt: new Date().toISOString(),
   };
 }
