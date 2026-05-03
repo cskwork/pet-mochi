@@ -20,6 +20,7 @@
   let loadError = $state<string | null>(null);
   let actionError = $state<string | null>(null);
   let pendingApiKey = $state("");
+  let approvedSummary = $state<{ name: string; text: string } | null>(null);
 
   function showError(prefix: string, e: unknown) {
     const msg = (e as Error)?.message ?? String(e);
@@ -114,7 +115,7 @@
   async function approveFile(name: string) {
     try {
       const summary = await api.approveFile(name);
-      alert(`Mochi summarized:\n\n${summary}`);
+      approvedSummary = { name, text: summary };
       inbox = await api.listInboxFiles();
     } catch (e) {
       showError("approve file", e);
@@ -219,7 +220,7 @@
     <p>Loading…</p>
   {:else}
     {#if actionError}
-      <p class="warn">{actionError}</p>
+      <p class="warn" role="alert">{actionError}</p>
     {/if}
 
     {#if activeTab === "general"}
@@ -315,7 +316,7 @@
         </label>
         <div class="actions">
           <button onclick={save}>Save</button>
-          <span class="status">{savingMessage}</span>
+          <span class="status" role={savingMessage.startsWith("error") ? "alert" : "status"} aria-live="polite">{savingMessage}</span>
         </div>
       </section>
     {/if}
@@ -380,6 +381,15 @@
               </li>
             {/each}
           </ul>
+        {/if}
+        {#if approvedSummary}
+          <div class="approved-summary" role="status" aria-live="polite">
+            <div class="row">
+              <strong>Summary — {approvedSummary.name}</strong>
+              <button onclick={() => (approvedSummary = null)} aria-label="Dismiss summary">×</button>
+            </div>
+            <p>{approvedSummary.text}</p>
+          </div>
         {/if}
         {#if lastReflection}
           <h3>Last dream — {lastReflection.reflectionDate}</h3>
@@ -559,5 +569,18 @@
     text-align: left;
     padding: 4px 6px;
     border-bottom: 1px solid #f1e1e8;
+  }
+  .approved-summary {
+    background: var(--mochi-cream);
+    border-radius: 10px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .approved-summary p {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
   }
 </style>
