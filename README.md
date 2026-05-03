@@ -72,17 +72,17 @@ npm run tauri:build    # full desktop installer (icons already generated)
 
 ## Talking to Mochi (optional)
 
-Pet Mochi is happy in silent mode. To enable chat, install Ollama and pull a
-model:
+Pet Mochi is happy in silent mode. To enable chat, install Ollama and pull the
+default lightweight model (small enough to run on most laptops):
 
 ```bash
-ollama pull llama3.2
+ollama pull gemma4:e2b
 ```
 
 Open Settings → set provider to `ollama`, point endpoint at `http://localhost:11434`
-and choose a model. Mochi will retrieve relevant memories, send a compressed
-prompt, and store an interaction. A best-effort memory extraction job runs in
-the background after each LLM-backed reply.
+and choose a model (defaults to `gemma4:e2b`). Mochi will retrieve relevant
+memories, send a compressed prompt, and store an interaction. A best-effort
+memory extraction job runs in the background after each LLM-backed reply.
 
 ## Sandbox
 
