@@ -14,16 +14,17 @@
   type Bar = {
     key: string;
     label: string;
+    icon: string;
     value: number;
     /** Visual hint for the fill colour. "good" = high is good, "bad" = high is bad. */
     polarity: "good" | "bad";
   };
 
   const bars = $derived<Bar[]>([
-    { key: "energy",    label: "Energy",    value: pet.energy,    polarity: "good" },
-    { key: "hunger",    label: "Hunger",    value: pet.hunger,    polarity: "bad"  },
-    { key: "affection", label: "Affection", value: pet.affection, polarity: "good" },
-    { key: "boredom",   label: "Boredom",   value: pet.boredom,   polarity: "bad"  },
+    { key: "energy",    label: "Energy",    icon: "⚡", value: pet.energy,    polarity: "good" },
+    { key: "hunger",    label: "Hunger",    icon: "🍡", value: pet.hunger,    polarity: "bad"  },
+    { key: "affection", label: "Affection", icon: "♥",  value: pet.affection, polarity: "good" },
+    { key: "boredom",   label: "Boredom",   icon: "💤", value: pet.boredom,   polarity: "bad"  },
   ]);
 
   function fillColor(b: Bar): string {
@@ -40,43 +41,38 @@
 
 {#if open}
   <aside class="status" aria-label="Pet status">
-    <header class="status-head">
-      <span class="name">{pet.name}</span>
-      <span class="mood">{pet.mood}</span>
-      <span class="bond" title="Bond level">♥ {pet.relationshipLevel}</span>
-      {#if saving}<span class="saving" aria-live="polite">saving…</span>{/if}
-      {#if onToggle}
-        <button
-          type="button"
-          class="close"
-          onclick={() => onToggle?.()}
-          aria-label="Hide status"
-          title="Hide status"
-        >×</button>
-      {/if}
-    </header>
-
-    <ul class="bars">
-      {#each bars as b (b.key)}
-        <li class="bar-row">
-          <span class="bar-label">{b.label}</span>
-          <div
-            class="bar-track"
-            role="progressbar"
-            aria-label={b.label}
-            aria-valuemin="0"
-            aria-valuemax="100"
-            aria-valuenow={Math.round(b.value)}
-          >
-            <div
-              class="bar-fill"
-              style="width: {Math.max(0, Math.min(100, b.value))}%; background: {fillColor(b)};"
-            ></div>
-          </div>
-          <span class="bar-num">{Math.round(b.value)}</span>
-        </li>
-      {/each}
-    </ul>
+    <span class="meta name">{pet.name}</span>
+    <span class="meta mood">{pet.mood}</span>
+    <span class="meta bond" title="Bond level">♥{pet.relationshipLevel}</span>
+    {#each bars as b (b.key)}
+      <span
+        class="gauge"
+        role="progressbar"
+        aria-label={b.label}
+        aria-valuemin="0"
+        aria-valuemax="100"
+        aria-valuenow={Math.round(b.value)}
+        title="{b.label}: {Math.round(b.value)}"
+      >
+        <span class="g-icon" aria-hidden="true">{b.icon}</span>
+        <span class="g-track">
+          <span
+            class="g-fill"
+            style="width: {Math.max(0, Math.min(100, b.value))}%; background: {fillColor(b)};"
+          ></span>
+        </span>
+      </span>
+    {/each}
+    {#if saving}<span class="meta saving" aria-live="polite">saving…</span>{/if}
+    {#if onToggle}
+      <button
+        type="button"
+        class="close"
+        onclick={() => onToggle?.()}
+        aria-label="Hide status"
+        title="Hide status"
+      >×</button>
+    {/if}
   </aside>
 {:else if onToggle}
   <button
@@ -93,66 +89,57 @@
 
 <style>
   .status {
-    background: rgba(255, 255, 255, 0.94);
-    padding: 10px 12px;
-    border-radius: 14px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
-    min-width: 200px;
-    max-width: 240px;
-    font-size: 12px;
-    color: var(--mochi-text, #3a2b34);
-    pointer-events: auto;
-  }
-  .status-head {
     display: flex;
     align-items: center;
-    gap: 8px;
-    margin-bottom: 8px;
-    font-weight: 600;
-  }
-  .name { font-size: 13px; }
-  .mood {
-    background: rgba(255, 220, 232, 0.7);
-    padding: 2px 7px;
+    gap: 6px;
+    background: rgba(255, 255, 255, 0.94);
+    padding: 5px 8px;
     border-radius: 999px;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.15);
     font-size: 11px;
-    font-weight: 500;
+    color: var(--mochi-text, #3a2b34);
+    pointer-events: auto;
+    /* Stays within the viewport even on the small 360×360 overlay. */
+    max-width: calc(100vw - 16px);
+  }
+  .meta {
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .name { font-size: 12px; }
+  .mood {
+    background: rgba(255, 220, 232, 0.75);
+    padding: 1px 7px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 600;
     text-transform: capitalize;
   }
   .bond {
-    margin-left: auto;
     color: #c0567a;
-    font-weight: 600;
-    font-size: 11px;
+    font-size: 10px;
   }
   .saving {
-    font-size: 10px;
+    font-size: 9px;
     color: #888;
     font-weight: 400;
   }
-  .bars {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-  }
-  .bar-row {
-    display: grid;
-    grid-template-columns: 64px 1fr 28px;
+  .gauge {
+    display: inline-flex;
     align-items: center;
-    gap: 8px;
+    gap: 3px;
   }
-  .bar-label { font-size: 11px; color: #6a5560; }
-  .bar-num { font-size: 10px; color: #6a5560; text-align: right; font-variant-numeric: tabular-nums; }
-  .bar-track {
-    height: 8px;
+  .g-icon { font-size: 11px; line-height: 1; }
+  .g-track {
+    display: inline-block;
+    width: 26px;
+    height: 6px;
     background: rgba(0, 0, 0, 0.07);
     border-radius: 999px;
     overflow: hidden;
   }
-  .bar-fill {
+  .g-fill {
+    display: block;
     height: 100%;
     border-radius: 999px;
     transition: width 0.4s ease, background 0.4s ease;
