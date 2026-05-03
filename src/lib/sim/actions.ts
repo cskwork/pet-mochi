@@ -1,3 +1,4 @@
+import { deriveMood } from "./mood";
 import { clamp, type Mood, type MovementState, type PetState } from "./state";
 
 export type ActionKey = "feed" | "play" | "rest" | "pet";
@@ -64,12 +65,14 @@ export function applyAction(
         hunger:    clamp(state.hunger    - 35),
         affection: clamp(state.affection + 3),
         stress:    clamp(state.stress    - 4),
-        // Any user attention satisfies a bit of curiosity — clears the "?".
-        curiosity: clamp(state.curiosity - 8),
+        // Any user attention satisfies curiosity — drop well below the
+        // 70-point mood threshold so mood drops out of "curious" the
+        // same tap (the recompute below) and stays out for a while.
+        curiosity: clamp(state.curiosity - 35),
         currentAnimation: lastAnim(steps),
         lastInteractionAt: nowIso,
       };
-      return { state: next, bubble: `${state.name}: *nom nom* 🍡`, eventType: def.eventType, salience: def.salience, steps };
+      return finishedAction(next, `${state.name}: *nom nom* 🍡`, def, steps);
     }
     case "play": {
       const steps = playSteps(rng);
@@ -79,12 +82,14 @@ export function applyAction(
         energy:    clamp(state.energy    - 8),
         affection: clamp(state.affection + 4),
         stress:    clamp(state.stress    - 6),
-        // Any user attention satisfies a bit of curiosity — clears the "?".
-        curiosity: clamp(state.curiosity - 8),
+        // Any user attention satisfies curiosity — drop well below the
+        // 70-point mood threshold so mood drops out of "curious" the
+        // same tap (the recompute below) and stays out for a while.
+        curiosity: clamp(state.curiosity - 35),
         currentAnimation: lastAnim(steps),
         lastInteractionAt: nowIso,
       };
-      return { state: next, bubble: playBubble(state.name, rng), eventType: def.eventType, salience: def.salience, steps };
+      return finishedAction(next, playBubble(state.name, rng), def, steps);
     }
     case "rest": {
       const steps = restSteps();
@@ -92,12 +97,14 @@ export function applyAction(
         ...state,
         energy: clamp(state.energy + 25),
         stress: clamp(state.stress - 12),
-        // Any user attention satisfies a bit of curiosity — clears the "?".
-        curiosity: clamp(state.curiosity - 8),
+        // Any user attention satisfies curiosity — drop well below the
+        // 70-point mood threshold so mood drops out of "curious" the
+        // same tap (the recompute below) and stays out for a while.
+        curiosity: clamp(state.curiosity - 35),
         currentAnimation: lastAnim(steps),
         lastInteractionAt: nowIso,
       };
-      return { state: next, bubble: `${state.name}: *yawn* …zzz 💤`, eventType: def.eventType, salience: def.salience, steps };
+      return finishedAction(next, `${state.name}: *yawn* …zzz 💤`, def, steps);
     }
     case "pet": {
       const steps = petSteps();
@@ -106,14 +113,31 @@ export function applyAction(
         affection: clamp(state.affection + 1),
         boredom:   clamp(state.boredom   - 4),
         stress:    clamp(state.stress    - 2),
-        // Any user attention satisfies a bit of curiosity — clears the "?".
-        curiosity: clamp(state.curiosity - 8),
+        // Any user attention satisfies curiosity — drop well below the
+        // 70-point mood threshold so mood drops out of "curious" the
+        // same tap (the recompute below) and stays out for a while.
+        curiosity: clamp(state.curiosity - 35),
         currentAnimation: lastAnim(steps),
         lastInteractionAt: nowIso,
       };
-      return { state: next, bubble: petReactionFor(state.mood, state.name), eventType: def.eventType, salience: def.salience, steps };
+      return finishedAction(next, petReactionFor(state.mood, state.name), def, steps);
     }
   }
+}
+
+/**
+ * Recompute mood from the post-action state so visible mood overlays (e.g.
+ * the "?" curious mark) clear in the same tap, instead of waiting for the
+ * next 3-second sim tick to call deriveMood.
+ */
+function finishedAction(
+  next: PetState,
+  bubble: string,
+  def: ActionDefinition,
+  steps: AnimationStep[],
+): ActionResult {
+  const state: PetState = { ...next, mood: deriveMood(next) };
+  return { state, bubble, eventType: def.eventType, salience: def.salience, steps };
 }
 
 function lastAnim(steps: AnimationStep[]): MovementState {
