@@ -1,11 +1,10 @@
 import type { MovementState, PetState } from "./state";
 
-export type NudgeKind = "hungry" | "lonely" | "stressed" | "tired" | "bored";
+export type NudgeKind = "hungry" | "lonely" | "tired" | "bored";
 
 export const NUDGE_KINDS: readonly NudgeKind[] = [
   "hungry",
   "lonely",
-  "stressed",
   "tired",
   "bored",
 ] as const;
@@ -52,17 +51,15 @@ type Trigger = {
 const TRIGGERS: Trigger[] = [
   { kind: "hungry",   fires: (s) => s.hunger    > 80, animation: "look_cursor" },
   { kind: "lonely",   fires: (s) => s.affection < 20, animation: "sit"         },
-  { kind: "stressed", fires: (s) => s.stress    > 70, animation: "hide"        },
   { kind: "tired",    fires: (s) => s.energy    < 20, animation: "sit"         },
   { kind: "bored",    fires: (s) => s.boredom   > 75, animation: "jump"        },
 ];
 
 const BUBBLES: Record<NudgeKind, readonly string[]> = {
-  hungry:   ["*tummy rumble*", "snack? 🥺", "fooood..."],
-  lonely:   ["where'd you go?", "♥?", "missed you"],
-  stressed: ["*tail twitch*", "ugh...", "everything feels loud"],
-  tired:    ["*yawn*", "...zzz", "sleepy..."],
-  bored:    ["play?", "I'm wiggly", "anything fun?"],
+  hungry: ["*tummy rumble*", "snack? 🥺", "fooood..."],
+  lonely: ["where'd you go?", "♥?", "missed you"],
+  tired:  ["*yawn*", "...zzz", "sleepy..."],
+  bored:  ["play?", "I'm wiggly", "anything fun?"],
 };
 
 /**

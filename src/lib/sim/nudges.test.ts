@@ -8,7 +8,7 @@ import {
   type NudgeState,
 } from "./nudges";
 
-const ALL: NudgeKind[] = ["hungry", "lonely", "stressed", "tired", "bored"];
+const ALL: NudgeKind[] = ["hungry", "lonely", "tired", "bored"];
 
 // Deterministic rng for bubble selection — always picks index 0.
 const rng0 = () => 0;
@@ -36,7 +36,6 @@ describe("nextNudge — no trigger", () => {
       ...base,
       hunger: 80,     // need > 80
       affection: 20,  // need < 20
-      stress: 70,     // need > 70
       energy: 20,     // need < 20
       boredom: 75,    // need > 75
     };
@@ -56,11 +55,6 @@ describe("nextNudge — single triggers", () => {
   it("fires 'lonely' when affection < 20", () => {
     const pet = { ...newPetState(), affection: 10 };
     expect(nextNudge(pet, freshState(), 0, rng0)?.kind).toBe("lonely");
-  });
-
-  it("fires 'stressed' when stress > 70", () => {
-    const pet = { ...newPetState(), stress: 80 };
-    expect(nextNudge(pet, freshState(), 0, rng0)?.kind).toBe("stressed");
   });
 
   it("fires 'tired' when energy < 20", () => {
@@ -90,7 +84,6 @@ describe("nextNudge — priority when multiple conditions cross", () => {
       ...newPetState(),
       hunger: 90,
       affection: 5,
-      stress: 90,
       energy: 5,
       boredom: 90,
     };
