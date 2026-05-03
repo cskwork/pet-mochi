@@ -211,6 +211,16 @@ describe("applyAction immutability and metadata", () => {
     }
   });
 
+  it("every action satisfies curiosity (so the '?' mark eventually clears)", () => {
+    // Without this, curiosity is monotonic: it ratchets up via decay until
+    // mood pins to "curious" forever and the ? overlay never goes away.
+    for (const k of ALL_KEYS) {
+      const start = { ...newPetState(), curiosity: 80 };
+      const { state } = applyAction(start, k);
+      expect(state.curiosity).toBeLessThan(start.curiosity);
+    }
+  });
+
   it("returns a non-empty steps array whose last entry matches state.currentAnimation", () => {
     for (const k of ALL_KEYS) {
       const { steps, state } = applyAction(newPetState(), k);

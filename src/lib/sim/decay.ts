@@ -14,7 +14,13 @@ export function applyDecay(state: PetState, elapsedSeconds: number): PetState {
   const dHunger = 0.10 * elapsedSeconds;
   const dEnergy = state.currentAnimation === "sleep" ? +0.5 * elapsedSeconds : -0.08 * elapsedSeconds;
   const dBoredom = 0.10 * elapsedSeconds;
-  const dCuriosity = 0.04 * elapsedSeconds;
+  // Curiosity drifts toward a low baseline so the "?" mark eventually clears
+  // when nothing novel happens. Above 60 it gently fades; below it slowly
+  // builds back up — without this, curiosity ratchets upward forever and
+  // mood pins to "curious" past 70 indefinitely.
+  const dCuriosity = state.curiosity > 60
+    ? -0.06 * elapsedSeconds
+    :  0.04 * elapsedSeconds;
   const dStress = -0.03 * elapsedSeconds;
 
   // Loneliness — affection drops slightly when no recent interaction.

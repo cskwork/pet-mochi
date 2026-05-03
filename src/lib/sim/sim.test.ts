@@ -85,6 +85,16 @@ describe("applyDecay", () => {
     expect(out.energy).toBeGreaterThan(s.energy);
   });
 
+  // Without bidirectional pressure on curiosity it climbs forever past the
+  // 70-point "?" threshold and the curious mark never goes away. Curiosity
+  // should slowly fade if nothing novel happens — same shape as boredom but
+  // gentler so a brief cursor-away doesn't kill the curious look entirely.
+  it("decays curiosity slowly so it doesn't pin at 100 forever", () => {
+    const s = { ...newPetState(), curiosity: 80 };
+    const out = applyDecay(s, 60);
+    expect(out.curiosity).toBeLessThan(s.curiosity);
+  });
+
   it("drains energy slowly while awake", () => {
     const s = { ...newPetState(), energy: 50 };
     const out = applyDecay(s, 60);
