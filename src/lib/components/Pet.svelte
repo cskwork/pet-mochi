@@ -33,6 +33,13 @@
   let saving = $state(false);
   let viewportSize = $state({ width: 360, height: 360 });
 
+  const BUBBLE_W = 240;
+  const BUBBLE_H = 80;
+  const bubbleLeft = $derived(
+    Math.min(position.x + petSize, Math.max(0, viewportSize.width - BUBBLE_W)),
+  );
+  const bubbleTop = $derived(Math.max(BUBBLE_H, position.y));
+
   let tickTimer: ReturnType<typeof setInterval> | undefined;
   let blinkTimer: ReturnType<typeof setInterval> | undefined;
   let bubbleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -103,6 +110,7 @@
         await api.savePetState(snapshot);
       } catch (err) {
         console.warn("savePetState failed", err);
+        if (!destroyed) flashBubble("(couldn't save state)", 3_000);
       } finally {
         if (!destroyed) saving = false;
       }
@@ -483,7 +491,7 @@
   </button>
 
   {#if bubbleOpen && bubbleText}
-    <div class="bubble-anchor" style="left: {position.x + petSize}px; top: {position.y}px;">
+    <div class="bubble-anchor" style="left: {bubbleLeft}px; top: {bubbleTop}px;">
       <ChatBubble text={bubbleText} mood={pet.mood} />
     </div>
   {/if}
