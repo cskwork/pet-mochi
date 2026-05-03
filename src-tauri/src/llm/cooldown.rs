@@ -73,4 +73,32 @@ mod tests {
         assert!(cd.try_acquire("b", Duration::from_secs(60)));
         assert!(!cd.try_acquire("a", Duration::from_secs(60)));
     }
+
+    /// Regression: concurrent try_acquire calls on the same key must serialize
+    /// such that exactly ONE wins inside the cooldown window. If the inner
+    /// check+insert ever stops being atomic, this fires intermittently — but
+    /// 32 threads makes the race extremely likely to land.
+    #[test]
+    fn concurrent_acquires_only_one_wins() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        use std::thread;
+
+        let cd = Arc::new(CooldownManager::new());
+        let wins = Arc::new(AtomicUsize::new(0));
+        let mut handles = Vec::new();
+        for _ in 0..32 {
+            let cd = cd.clone();
+            let wins = wins.clone();
+            handles.push(thread::spawn(move || {
+                if cd.try_acquire("llm_autonomous", Duration::from_secs(60)) {
+                    wins.fetch_add(1, Ordering::SeqCst);
+                }
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+        assert_eq!(wins.load(Ordering::SeqCst), 1);
+    }
 }

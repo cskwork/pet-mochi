@@ -35,7 +35,7 @@
         api.getSettings(),
         api.listMemories(200),
         api.listInboxFiles(),
-        api.getEventLog(100),
+        api.getEventLog(50),
         api.getLastReflection(),
       ]);
       settings = s;
@@ -140,10 +140,16 @@
 
   async function refreshEvents() {
     try {
-      events = await api.getEventLog(100);
+      events = await api.getEventLog(50);
     } catch (e) {
       showError("event log", e);
     }
+  }
+
+  function payloadPreview(raw: string | null | undefined): string {
+    if (!raw) return "";
+    const flat = raw.replace(/\s+/g, " ").trim();
+    return flat.length > 80 ? flat.slice(0, 80) + "…" : flat;
   }
 
   const TABS = ["general", "memory", "sandbox", "developer"] as const;
@@ -405,22 +411,43 @@
     {#if activeTab === "developer"}
       <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
       <section id="panel-developer" role="tabpanel" aria-labelledby="tab-developer">
-        <p class="hint">Internal event log — last 100 events.</p>
-        <button onclick={refreshEvents}>Refresh</button>
-        <table>
-          <thead>
-            <tr><th>time</th><th>type</th><th>salience</th></tr>
-          </thead>
-          <tbody>
-            {#each events as e (e.id)}
-              <tr>
-                <td>{new Date(e.createdAt).toLocaleTimeString()}</td>
-                <td>{e.eventType}</td>
-                <td>{e.salience ?? "-"}</td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
+        {#if !settings.developerEventLog}
+          <p class="hint">
+            The developer event log is disabled. Enable “Developer event log” in
+            the General tab to inspect recent events.
+          </p>
+        {:else}
+          <p class="hint">Internal event log — last 50 events. Refresh on demand.</p>
+          <div class="actions">
+            <button onclick={refreshEvents}>Refresh</button>
+          </div>
+          {#if events.length === 0}
+            <p class="hint">No events logged.</p>
+          {:else}
+            <div class="event-log-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>time</th>
+                    <th>type</th>
+                    <th>salience</th>
+                    <th>payload</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {#each events as e (e.id)}
+                    <tr>
+                      <td>{new Date(e.createdAt).toLocaleTimeString()}</td>
+                      <td>{e.eventType}</td>
+                      <td>{e.salience ?? "-"}</td>
+                      <td title={e.payloadJson ?? ""}>{payloadPreview(e.payloadJson)}</td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          {/if}
+        {/if}
       </section>
     {/if}
   {/if}
@@ -569,6 +596,12 @@
     text-align: left;
     padding: 4px 6px;
     border-bottom: 1px solid #f1e1e8;
+    vertical-align: top;
+    word-break: break-word;
+  }
+  .event-log-scroll {
+    max-height: 320px;
+    overflow-y: auto;
   }
   .approved-summary {
     background: var(--mochi-cream);

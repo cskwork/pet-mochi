@@ -4,8 +4,7 @@ export type Mood =
   | "tired"
   | "hungry"
   | "bored"
-  | "lonely"
-  | "focused";
+  | "lonely";
 
 export type Intent =
   | "idle"
@@ -73,6 +72,25 @@ export type StatKey = (typeof STAT_KEYS)[number];
 
 export const clamp = (n: number, lo = 0, hi = 100): number =>
   Math.min(hi, Math.max(lo, n));
+
+/**
+ * Minutes elapsed between `lastInteractionAtIso` (RFC3339, as persisted by the
+ * backend) and `now`. Returns `null` when the timestamp is missing or
+ * unparseable so callers can fall back to a sane default (e.g. session start).
+ *
+ * Extracted so the persist→restart→derive pipeline can be regression-tested
+ * (PRD §21.3: `lastInteractionAt` survives restart and `awayMinutes` is
+ * computed from it).
+ */
+export function computeAwayMinutes(
+  lastInteractionAtIso: string | null | undefined,
+  now: number,
+): number | null {
+  if (!lastInteractionAtIso) return null;
+  const t = Date.parse(lastInteractionAtIso);
+  if (Number.isNaN(t)) return null;
+  return (now - t) / 60_000;
+}
 
 export function newPetState(name = "Mochi"): PetState {
   const now = new Date().toISOString();

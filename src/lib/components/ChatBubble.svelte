@@ -11,7 +11,6 @@
     hungry: "#FFE0CC",
     bored: "#E2E8EE",
     lonely: "#D9D2EA",
-    focused: "#D7EFE2",
   };
 </script>
 
