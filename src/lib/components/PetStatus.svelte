@@ -8,33 +8,41 @@
     open?: boolean;
     /** Toggle handler — clicked from both the chip and the panel close button. */
     onToggle?: () => void;
+    /** Stat key currently being flashed (briefly highlighted). Lets the user
+        see that an action registered even when the value is already at cap. */
+    flashedStat?: string | null;
   };
-  let { pet, saving = false, open = false, onToggle }: Props = $props();
+  let {
+    pet,
+    saving = false,
+    open = false,
+    onToggle,
+    flashedStat = null,
+  }: Props = $props();
 
   type Bar = {
+    /** Stable key — matches Pet.svelte's ACTION_TO_STAT map for the flash cue. */
     key: string;
     label: string;
     icon: string;
+    /** Display value 0-100. All gauges read "high = good" so action presses
+        always make the bar fill UP. Internally the sim still tracks hunger/
+        boredom as bad-when-high; we invert only at the display layer. */
     value: number;
-    /** Visual hint for the fill colour. "good" = high is good, "bad" = high is bad. */
-    polarity: "good" | "bad";
   };
 
   const bars = $derived<Bar[]>([
-    { key: "energy",    label: "Energy",    icon: "⚡", value: pet.energy,    polarity: "good" },
-    { key: "hunger",    label: "Hunger",    icon: "🍡", value: pet.hunger,    polarity: "bad"  },
-    { key: "affection", label: "Affection", icon: "♥",  value: pet.affection, polarity: "good" },
-    { key: "boredom",   label: "Boredom",   icon: "💤", value: pet.boredom,   polarity: "bad"  },
+    { key: "energy",    label: "Energy",   icon: "⚡", value: pet.energy },
+    { key: "hunger",    label: "Fullness", icon: "🍡", value: 100 - pet.hunger },
+    { key: "affection", label: "Affection", icon: "♥",  value: pet.affection },
+    { key: "boredom",   label: "Fun",      icon: "🎾", value: 100 - pet.boredom },
   ]);
 
   function fillColor(b: Bar): string {
+    // All gauges are "high = good" now, so the colour logic is uniform.
     const pct = Math.max(0, Math.min(100, b.value));
-    // For "good" stats: low is bad (red), high is fine (green).
-    // For "bad" stats: high is bad (red), low is fine (green).
-    const danger = b.polarity === "good" ? pct < 25 : pct > 75;
-    const warn   = b.polarity === "good" ? pct < 45 : pct > 55;
-    if (danger) return "var(--mochi-bar-danger, #e57373)";
-    if (warn)   return "var(--mochi-bar-warn,   #f5b955)";
+    if (pct < 25) return "var(--mochi-bar-danger, #e57373)";
+    if (pct < 45) return "var(--mochi-bar-warn,   #f5b955)";
     return "var(--mochi-bar-ok, #6dc28a)";
   }
 </script>
@@ -47,6 +55,7 @@
     {#each bars as b (b.key)}
       <span
         class="gauge"
+        class:flash={flashedStat === b.key}
         role="progressbar"
         aria-label={b.label}
         aria-valuemin="0"
@@ -61,6 +70,7 @@
             style="width: {Math.max(0, Math.min(100, b.value))}%; background: {fillColor(b)};"
           ></span>
         </span>
+        <span class="g-num">{Math.round(b.value)}</span>
       </span>
     {/each}
     {#if saving}<span class="meta saving" aria-live="polite">saving…</span>{/if}
@@ -132,6 +142,25 @@
     display: inline-flex;
     align-items: center;
     gap: 3px;
+    padding: 2px 4px;
+    border-radius: 999px;
+    transition: background 0.25s ease, transform 0.2s ease;
+  }
+  .gauge.flash {
+    background: rgba(255, 220, 232, 0.85);
+    animation: gauge-pulse 0.6s ease-out;
+  }
+  @keyframes gauge-pulse {
+    0%   { transform: scale(1.0); }
+    35%  { transform: scale(1.15); }
+    100% { transform: scale(1.0); }
+  }
+  .g-num {
+    font-size: 9px;
+    color: #6a5560;
+    font-variant-numeric: tabular-nums;
+    min-width: 14px;
+    text-align: right;
   }
   .g-icon { font-size: 12px; line-height: 1; }
   .g-track {
