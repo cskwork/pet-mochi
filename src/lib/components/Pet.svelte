@@ -7,6 +7,7 @@
   import {
     deriveTimeOfDay,
     nextWanderPosition,
+    findSafeStartPosition,
     newPetState,
     runTick,
     applyAction,
@@ -15,6 +16,7 @@
     newNudgeState,
     type ActionKey,
     type NudgeState,
+    type Obstacle,
     type PetState,
     type RuntimeContext,
   } from "../sim";
@@ -37,6 +39,10 @@
   let busyAction = $state<ActionKey | null>(null);
   let busyTimer: ReturnType<typeof setTimeout> | undefined;
   let reporting = $state(false);
+  // Status panel starts collapsed so it never covers Mochi on first launch.
+  // Users can re-open it from the floating chip in the top-left corner.
+  let statusOpen = $state(false);
+  let positionInitialised = false;
   let facing = $state<"left" | "right">("right");
   let recentPositive = $state(false);
   let lastInteractionAt = $state<number>(Date.now());
@@ -143,13 +149,15 @@
       facing = cursor.x < position.x + petSize / 2 ? "left" : "right";
     }
 
-    // Wander while walking/running
+    // Wander while walking/running. The status panel (when open) and the
+    // actions panel are passed as obstacles so Mochi never visually disappears
+    // behind UI chrome.
     if (next.currentAnimation === "walk" || next.currentAnimation === "run") {
-      const newPos = nextWanderPosition(position, {
-        width: viewportSize.width,
-        height: viewportSize.height,
-        petSize,
-      });
+      const newPos = nextWanderPosition(
+        position,
+        { width: viewportSize.width, height: viewportSize.height, petSize },
+        currentObstacles(),
+      );
       facing = newPos.x < position.x ? "left" : newPos.x > position.x ? "right" : facing;
       position = newPos;
     }
@@ -366,11 +374,40 @@
     };
   }
 
-  // Status panel sits top-left.
+  // Status anchor sits top-left. Width/height depend on whether the full
+  // panel is visible or only the small floating chip.
   function statusBox(): { left: number; top: number; right: number; bottom: number } {
-    const w = 240;
-    const h = 130;
+    const w = statusOpen ? 240 : 100;
+    const h = statusOpen ? 150 : 32;
     return { left: 8, top: 8, right: 8 + w, bottom: 8 + h };
+  }
+
+  /** Obstacles the pet should avoid wandering into. */
+  function currentObstacles(): Obstacle[] {
+    const obs: Obstacle[] = [actionsBox()];
+    if (statusOpen) obs.push(statusBox());
+    return obs;
+  }
+
+  function toggleStatus() {
+    statusOpen = !statusOpen;
+    // If the new panel size now overlaps the pet, gently relocate it to a
+    // safe spot. Without this, opening status while Mochi is in the corner
+    // would visually swallow her until the next walk tick.
+    const obs = currentObstacles();
+    const overlaps = obs.some(
+      (o) =>
+        position.x < o.right &&
+        position.x + petSize > o.left &&
+        position.y < o.bottom &&
+        position.y + petSize > o.top,
+    );
+    if (overlaps) {
+      position = findSafeStartPosition(
+        { width: viewportSize.width, height: viewportSize.height, petSize },
+        obs,
+      );
+    }
   }
 
   function isInsideRect(
@@ -448,6 +485,17 @@
     window.addEventListener("pointermove", onPointerMove);
 
     await syncFromBackend();
+
+    // Place Mochi in a sensible visible spot once the viewport is known.
+    // Default (0,0) would put her in the corner under the status chip.
+    if (!positionInitialised) {
+      position = findSafeStartPosition(
+        { width: viewportSize.width, height: viewportSize.height, petSize },
+        currentObstacles(),
+      );
+      positionInitialised = true;
+    }
+
     lastTickAt = Date.now();
     tickTimer = setInterval(tick, TICK_MS);
 
@@ -559,7 +607,7 @@
   {/if}
 
   <div class="status-anchor">
-    <PetStatus {pet} {saving} />
+    <PetStatus {pet} {saving} open={statusOpen} onToggle={toggleStatus} />
   </div>
 
   <div class="actions-anchor">
