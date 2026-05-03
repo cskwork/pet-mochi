@@ -221,6 +221,21 @@ describe("applyAction immutability and metadata", () => {
     }
   });
 
+  it("clears the curious mood IMMEDIATELY (single tap, no waiting for tick)", () => {
+    // The MochiSprite "?" overlay is bound to pet.mood, not pet.curiosity.
+    // If applyAction only nudges curiosity but leaves mood frozen at
+    // "curious", users see the ? linger until the next 3-second sim tick.
+    // A single Pat must drop the user out of curious immediately.
+    for (const k of ALL_KEYS) {
+      const start = { ...newPetState(), curiosity: 95, mood: "curious" as const };
+      const { state } = applyAction(start, k);
+      expect(state.mood).not.toBe("curious");
+      // And the underlying stat must be well below the 70-point threshold
+      // so the next tick's deriveMood doesn't immediately re-trigger it.
+      expect(state.curiosity).toBeLessThan(70);
+    }
+  });
+
   it("returns a non-empty steps array whose last entry matches state.currentAnimation", () => {
     for (const k of ALL_KEYS) {
       const { steps, state } = applyAction(newPetState(), k);
