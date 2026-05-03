@@ -5,6 +5,7 @@ import {
   chooseMovement,
   deriveMood,
   newPetState,
+  nextWanderPosition,
   runTick,
   type RuntimeContext,
 } from "./index";
@@ -126,6 +127,59 @@ describe("runTick", () => {
     expect(out.mood).toBeDefined();
     expect(out.currentAnimation).toBeDefined();
     expect(out).not.toBe(s);
+  });
+});
+
+describe("nextWanderPosition with obstacles", () => {
+  // 360x360 viewport with petSize 60. Status box top-left, actions box
+  // bottom-right — the pet must never settle inside either.
+  const bounds = { width: 360, height: 360, petSize: 60 };
+  const obstacles = [
+    { left: 0, top: 0, right: 200, bottom: 100 },        // top-left status panel
+    { left: 200, top: 280, right: 360, bottom: 360 },    // bottom-right actions panel
+  ];
+
+  it("returns a non-overlapping position when obstacles are passed", () => {
+    // Start near the status box; many random walks should still keep the
+    // pet's rect outside every obstacle.
+    let pos = { x: 10, y: 10 };
+    for (let i = 0; i < 50; i++) {
+      pos = nextWanderPosition(pos, bounds, obstacles, seededRng);
+      const petRect = {
+        left: pos.x,
+        top: pos.y,
+        right: pos.x + bounds.petSize,
+        bottom: pos.y + bounds.petSize,
+      };
+      for (const obs of obstacles) {
+        const overlaps =
+          petRect.left < obs.right &&
+          petRect.right > obs.left &&
+          petRect.top < obs.bottom &&
+          petRect.bottom > obs.top;
+        expect(overlaps).toBe(false);
+      }
+    }
+  });
+
+  it("with no obstacles passed, behaves as a free wander", () => {
+    const pos = nextWanderPosition({ x: 100, y: 100 }, bounds, undefined, seededRng);
+    expect(pos.x).toBeGreaterThanOrEqual(0);
+    expect(pos.x).toBeLessThanOrEqual(bounds.width - bounds.petSize);
+    expect(pos.y).toBeGreaterThanOrEqual(0);
+    expect(pos.y).toBeLessThanOrEqual(bounds.height - bounds.petSize);
+  });
+
+  it("when stuck inside an obstacle, never returns a worse position", () => {
+    // Start INSIDE the top-left obstacle; the result must not still be inside it.
+    const stuck = { x: 0, y: 0 };
+    const result = nextWanderPosition(stuck, bounds, obstacles, seededRng);
+    const inObstacle =
+      result.x < obstacles[0].right &&
+      result.x + bounds.petSize > obstacles[0].left &&
+      result.y < obstacles[0].bottom &&
+      result.y + bounds.petSize > obstacles[0].top;
+    expect(inObstacle).toBe(false);
   });
 });
 

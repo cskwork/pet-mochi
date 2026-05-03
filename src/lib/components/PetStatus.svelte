@@ -1,8 +1,15 @@
 <script lang="ts">
   import type { PetState } from "../sim";
 
-  type Props = { pet: PetState; saving?: boolean };
-  let { pet, saving = false }: Props = $props();
+  type Props = {
+    pet: PetState;
+    saving?: boolean;
+    /** When false, renders a tiny floating chip instead of the full panel. */
+    open?: boolean;
+    /** Toggle handler — clicked from both the chip and the panel close button. */
+    onToggle?: () => void;
+  };
+  let { pet, saving = false, open = false, onToggle }: Props = $props();
 
   type Bar = {
     key: string;
@@ -31,36 +38,58 @@
   }
 </script>
 
-<aside class="status" aria-label="Pet status">
-  <header class="status-head">
-    <span class="name">{pet.name}</span>
-    <span class="mood">{pet.mood}</span>
-    <span class="bond" title="Bond level">♥ {pet.relationshipLevel}</span>
-    {#if saving}<span class="saving" aria-live="polite">saving…</span>{/if}
-  </header>
+{#if open}
+  <aside class="status" aria-label="Pet status">
+    <header class="status-head">
+      <span class="name">{pet.name}</span>
+      <span class="mood">{pet.mood}</span>
+      <span class="bond" title="Bond level">♥ {pet.relationshipLevel}</span>
+      {#if saving}<span class="saving" aria-live="polite">saving…</span>{/if}
+      {#if onToggle}
+        <button
+          type="button"
+          class="close"
+          onclick={() => onToggle?.()}
+          aria-label="Hide status"
+          title="Hide status"
+        >×</button>
+      {/if}
+    </header>
 
-  <ul class="bars">
-    {#each bars as b (b.key)}
-      <li class="bar-row">
-        <span class="bar-label">{b.label}</span>
-        <div
-          class="bar-track"
-          role="progressbar"
-          aria-label={b.label}
-          aria-valuemin="0"
-          aria-valuemax="100"
-          aria-valuenow={Math.round(b.value)}
-        >
+    <ul class="bars">
+      {#each bars as b (b.key)}
+        <li class="bar-row">
+          <span class="bar-label">{b.label}</span>
           <div
-            class="bar-fill"
-            style="width: {Math.max(0, Math.min(100, b.value))}%; background: {fillColor(b)};"
-          ></div>
-        </div>
-        <span class="bar-num">{Math.round(b.value)}</span>
-      </li>
-    {/each}
-  </ul>
-</aside>
+            class="bar-track"
+            role="progressbar"
+            aria-label={b.label}
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-valuenow={Math.round(b.value)}
+          >
+            <div
+              class="bar-fill"
+              style="width: {Math.max(0, Math.min(100, b.value))}%; background: {fillColor(b)};"
+            ></div>
+          </div>
+          <span class="bar-num">{Math.round(b.value)}</span>
+        </li>
+      {/each}
+    </ul>
+  </aside>
+{:else if onToggle}
+  <button
+    type="button"
+    class="status-chip"
+    onclick={() => onToggle?.()}
+    aria-label="Show status"
+    title="Show {pet.name}'s status"
+  >
+    <span class="chip-icon" aria-hidden="true">📊</span>
+    <span class="chip-mood">{pet.mood}</span>
+  </button>
+{/if}
 
 <style>
   .status {
@@ -128,4 +157,46 @@
     border-radius: 999px;
     transition: width 0.4s ease, background 0.4s ease;
   }
+  .close {
+    margin-left: 4px;
+    width: 22px;
+    height: 22px;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    font-size: 16px;
+    line-height: 1;
+    color: var(--mochi-text, #3a2b34);
+    opacity: 0.55;
+    cursor: pointer;
+    transition: opacity 0.15s ease, background 0.15s ease;
+  }
+  .close:hover {
+    opacity: 1;
+    background: rgba(0, 0, 0, 0.06);
+  }
+  .status-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border: 0;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.92);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.14);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--mochi-text, #3a2b34);
+    cursor: pointer;
+    pointer-events: auto;
+    transition: transform 0.08s ease, background 0.15s ease;
+  }
+  .status-chip:hover {
+    background: rgba(255, 240, 245, 0.98);
+  }
+  .status-chip:active {
+    transform: scale(0.96);
+  }
+  .chip-icon { font-size: 14px; line-height: 1; }
+  .chip-mood { text-transform: capitalize; }
 </style>

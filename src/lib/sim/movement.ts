@@ -28,20 +28,89 @@ export function chooseMovement(
   return pick(IDLE_VARIANTS, rng);
 }
 
+/** A no-go rectangle that the pet should not be drawn over. */
+export type Obstacle = { left: number; top: number; right: number; bottom: number };
+
+function rectsOverlap(
+  ax: number, ay: number, aw: number, ah: number,
+  obs: Obstacle,
+): boolean {
+  return (
+    ax < obs.right &&
+    ax + aw > obs.left &&
+    ay < obs.bottom &&
+    ay + ah > obs.top
+  );
+}
+
+function clamp(n: number, lo: number, hi: number): number {
+  return Math.min(hi, Math.max(lo, n));
+}
+
 /**
  * Pick the next position delta when the pet decides to wander. Bounded inside
- * the given window dimensions.
+ * the given window dimensions. When `obstacles` is provided, refuses positions
+ * that would overlap any obstacle rect — retries up to a few times and, on
+ * failure, returns the current position so the pet stops rather than warping.
+ *
+ * Backwards compatible: callers can omit `obstacles` (or pass `undefined`) and
+ * the wander stays free.
  */
 export function nextWanderPosition(
   current: { x: number; y: number },
   bounds: { width: number; height: number; petSize: number },
+  obstacles?: readonly Obstacle[],
   rng: Rng = defaultRng,
 ): { x: number; y: number } {
-  const stepX = Math.round((rng() - 0.5) * 80);
-  const stepY = Math.round((rng() - 0.5) * 40);
   const maxX = Math.max(0, bounds.width - bounds.petSize);
   const maxY = Math.max(0, bounds.height - bounds.petSize);
-  const x = Math.min(maxX, Math.max(0, current.x + stepX));
-  const y = Math.min(maxY, Math.max(0, current.y + stepY));
-  return { x, y };
+  const obs = obstacles ?? [];
+
+  const overlapsAny = (x: number, y: number): boolean =>
+    obs.some((o) => rectsOverlap(x, y, bounds.petSize, bounds.petSize, o));
+
+  // First try natural random steps (the usual wander feel).
+  for (let i = 0; i < 6; i++) {
+    const stepX = Math.round((rng() - 0.5) * 80);
+    const stepY = Math.round((rng() - 0.5) * 40);
+    const x = clamp(current.x + stepX, 0, maxX);
+    const y = clamp(current.y + stepY, 0, maxY);
+    if (!overlapsAny(x, y)) return { x, y };
+  }
+
+  // All random steps overlap an obstacle (likely the pet is currently inside
+  // one — e.g. the status panel just opened). Escape to a known-safe cell
+  // computed from the same obstacle set.
+  return findSafeStartPosition(bounds, obs);
+}
+
+/**
+ * Find a sensible starting position for the pet that avoids all obstacles.
+ * Tries vertical-center first; if that overlaps, scans a small grid.
+ */
+export function findSafeStartPosition(
+  bounds: { width: number; height: number; petSize: number },
+  obstacles: readonly Obstacle[] = [],
+): { x: number; y: number } {
+  const maxX = Math.max(0, bounds.width - bounds.petSize);
+  const maxY = Math.max(0, bounds.height - bounds.petSize);
+  const overlapsAny = (x: number, y: number): boolean =>
+    obstacles.some((o) => rectsOverlap(x, y, bounds.petSize, bounds.petSize, o));
+
+  const center = {
+    x: clamp(Math.round((bounds.width  - bounds.petSize) / 2), 0, maxX),
+    y: clamp(Math.round((bounds.height - bounds.petSize) / 2), 0, maxY),
+  };
+  if (!overlapsAny(center.x, center.y)) return center;
+
+  // Scan a 5x5 grid for a non-overlapping cell.
+  for (let r = 0; r < 5; r++) {
+    for (let c = 0; c < 5; c++) {
+      const x = clamp(Math.round((c / 4) * maxX), 0, maxX);
+      const y = clamp(Math.round((r / 4) * maxY), 0, maxY);
+      if (!overlapsAny(x, y)) return { x, y };
+    }
+  }
+  // No safe cell — return center anyway.
+  return center;
 }
