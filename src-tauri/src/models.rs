@@ -160,7 +160,7 @@ impl Default for Settings {
             personality_preset: "curious".to_string(),
             llm_provider: "ollama".to_string(),
             ollama_endpoint: "http://localhost:11434".to_string(),
-            ollama_model: "llama3.2".to_string(),
+            ollama_model: "gemma4:e2b".to_string(),
             local_only_mode: true,
             autonomous_speech: true,
             memory_enabled: true,

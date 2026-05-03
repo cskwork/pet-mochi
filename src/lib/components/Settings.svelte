@@ -252,7 +252,7 @@
         </label>
         <label>
           Ollama model
-          <input bind:value={settings.ollamaModel} placeholder="llama3.2" />
+          <input bind:value={settings.ollamaModel} placeholder="gemma4:e2b" />
         </label>
 
         <fieldset>
