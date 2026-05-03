@@ -1,20 +1,26 @@
 <script lang="ts">
-  type Props = { onSubmit: (text: string) => void };
+  type Props = { onSubmit: (text: string) => void | Promise<void> };
   let { onSubmit }: Props = $props();
 
   let value = $state("");
+  let sending = $state(false);
 
-  function submit() {
+  async function submit() {
     const t = value.trim();
-    if (!t) return;
-    onSubmit(t);
-    value = "";
+    if (!t || sending) return;
+    sending = true;
+    try {
+      await onSubmit(t);
+      value = "";
+    } finally {
+      sending = false;
+    }
   }
 
   function onKey(e: KeyboardEvent) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      submit();
+      void submit();
     }
   }
 </script>
@@ -26,8 +32,15 @@
     onkeydown={onKey}
     placeholder="say hi to mochi…"
     aria-label="Chat with mochi"
+    disabled={sending}
   />
-  <button onclick={submit} disabled={!value.trim()}>send</button>
+  <button
+    onclick={submit}
+    disabled={!value.trim() || sending}
+    aria-busy={sending}
+  >
+    {sending ? "sending…" : "send"}
+  </button>
 </div>
 
 <style>
