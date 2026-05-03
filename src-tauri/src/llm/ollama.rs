@@ -31,6 +31,10 @@ struct GenerateRequest<'a> {
     prompt: String,
     system: Option<String>,
     stream: bool,
+    // Disables reasoning-mode wrapping for "thinking" models (e.g. gemma4:e2b).
+    // Without it, Ollama keeps the user-visible `response` empty until the much
+    // larger thinking budget is hit. Non-thinking models ignore the field.
+    think: bool,
     options: GenerateOptions,
 }
 
@@ -65,6 +69,7 @@ impl LlmProvider for OllamaProvider {
                 prompt: req.prompt,
                 system: req.system,
                 stream: false,
+                think: false,
                 options: GenerateOptions {
                     temperature: req.temperature,
                     num_predict: req.max_tokens,
