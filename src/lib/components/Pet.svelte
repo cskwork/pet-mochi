@@ -39,6 +39,17 @@
   let busyAction = $state<ActionKey | null>(null);
   let busyTimer: ReturnType<typeof setTimeout> | undefined;
   let reporting = $state(false);
+  // Which stat to briefly highlight in PetStatus after an action — gives the
+  // user a visible cue even when the underlying value is already at cap.
+  let flashedStat = $state<string | null>(null);
+  let flashStatTimer: ReturnType<typeof setTimeout> | undefined;
+  // Maps each action to the bar that should pulse when the action fires.
+  const ACTION_TO_STAT: Record<ActionKey, string> = {
+    feed: "hunger",
+    play: "boredom",
+    pet: "affection",
+    rest: "energy",
+  };
   // Status panel starts collapsed so it never covers Mochi on first launch.
   // Users can re-open it from the floating chip in the top-left corner.
   let statusOpen = $state(false);
@@ -258,6 +269,17 @@
     recentPositive = true;
     const { state, bubble, eventType, salience } = applyAction(pet, key);
     pet = state;
+    // Pulse the affected gauge so the user sees the action register, even
+    // if the stat was already at its cap.
+    const statKey = ACTION_TO_STAT[key];
+    if (statKey) {
+      // Quickly toggle off-then-on so a rapid second click of the same action
+      // re-triggers the pulse animation instead of being swallowed.
+      flashedStat = null;
+      if (flashStatTimer) clearTimeout(flashStatTimer);
+      queueMicrotask(() => { flashedStat = statKey; });
+      flashStatTimer = setTimeout(() => { flashedStat = null; }, 700);
+    }
     flashBubble(bubble, 2_500);
     await api.logEvent(eventType, undefined, salience).catch(() => undefined);
     scheduleSave();
@@ -606,6 +628,7 @@
     if (bubbleTimer) clearTimeout(bubbleTimer);
     if (saveTimer) clearTimeout(saveTimer);
     if (busyTimer) clearTimeout(busyTimer);
+    if (flashStatTimer) clearTimeout(flashStatTimer);
     if (hitTestTimer) clearInterval(hitTestTimer);
     window.removeEventListener("resize", onResize);
     window.removeEventListener("pointermove", onPointerMove);
@@ -649,7 +672,7 @@
   {/if}
 
   <div class="status-anchor">
-    <PetStatus {pet} {saving} open={statusOpen} onToggle={toggleStatus} />
+    <PetStatus {pet} {saving} open={statusOpen} onToggle={toggleStatus} {flashedStat} />
   </div>
 
   <div class="actions-anchor">
