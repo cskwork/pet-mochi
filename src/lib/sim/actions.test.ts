@@ -9,6 +9,9 @@ import {
 
 const ALL_KEYS: ActionKey[] = ["feed", "play", "rest", "pet"];
 
+// Deterministic stub so play-variant picking is reproducible in tests.
+const fixedRng = (n: number) => () => n;
+
 describe("ACTION_KEYS", () => {
   it("exposes exactly the four tamagotchi-style actions", () => {
     expect(new Set(ACTION_KEYS)).toEqual(new Set(ALL_KEYS));
@@ -35,7 +38,23 @@ describe("applyAction(feed)", () => {
     expect(state.hunger).toBeLessThan(start.hunger);
     expect(state.affection).toBeGreaterThan(start.affection);
     expect(state.stress).toBeLessThanOrEqual(start.stress);
+    // Final resting pose after the eating sequence is the satisfied/celebrate one.
     expect(state.currentAnimation).toBe("celebrate");
+  });
+
+  it("plays a multi-frame eating sequence ending on celebrate", () => {
+    const { steps, state } = applyAction(newPetState(), "feed");
+    expect(steps.length).toBeGreaterThanOrEqual(3);
+    const animations = steps.map((s) => s.animation);
+    // Must include both eat frames so the user actually sees chewing.
+    expect(animations).toContain("eat");
+    expect(animations).toContain("eat_2");
+    // Last step is the resting pose and must equal state.currentAnimation.
+    expect(animations[animations.length - 1]).toBe(state.currentAnimation);
+    // Each step must be a positive duration so the scheduler can hold it.
+    for (const step of steps) {
+      expect(step.durationMs).toBeGreaterThan(0);
+    }
   });
 
   it("never drives hunger below 0", () => {
@@ -58,7 +77,29 @@ describe("applyAction(play)", () => {
     expect(state.boredom).toBeLessThan(start.boredom);
     expect(state.energy).toBeLessThan(start.energy);
     expect(state.affection).toBeGreaterThan(start.affection);
-    expect(state.currentAnimation).toBe("jump");
+    // Multi-step play always finishes on a celebrate pose so the user sees joy.
+    expect(state.currentAnimation).toBe("celebrate");
+  });
+
+  it("rng=0 picks the bounce variant including run+jump", () => {
+    const { steps } = applyAction(newPetState(), "play", fixedRng(0));
+    const animations = steps.map((s) => s.animation);
+    expect(animations).toContain("run");
+    expect(animations).toContain("jump");
+  });
+
+  it("rng=0.5 picks the roll variant including roll", () => {
+    const { steps } = applyAction(newPetState(), "play", fixedRng(0.5));
+    const animations = steps.map((s) => s.animation);
+    expect(animations).toContain("roll");
+  });
+
+  it("rng=0.99 picks the wiggle variant", () => {
+    const { steps } = applyAction(newPetState(), "play", fixedRng(0.99));
+    const animations = steps.map((s) => s.animation);
+    // Wiggle variant centers on jump+celebrate without run.
+    expect(animations.filter((a) => a === "jump").length).toBeGreaterThanOrEqual(1);
+    expect(animations).not.toContain("run");
   });
 
   it("clamps energy at 0 even when starting near empty", () => {
@@ -83,6 +124,15 @@ describe("applyAction(rest)", () => {
     expect(state.currentAnimation).toBe("sleep");
   });
 
+  it("plays yawn → sit → sleep so the wind-down is visible", () => {
+    const { steps, state } = applyAction(newPetState(), "rest");
+    const animations = steps.map((s) => s.animation);
+    expect(animations[0]).toBe("yawn");
+    expect(animations).toContain("sit");
+    expect(animations[animations.length - 1]).toBe("sleep");
+    expect(state.currentAnimation).toBe("sleep");
+  });
+
   it("clamps energy at 100 even when already high", () => {
     const start = { ...newPetState(), energy: 95 };
     const { state } = applyAction(start, "rest");
@@ -102,7 +152,15 @@ describe("applyAction(pet)", () => {
     const { state } = applyAction(start, "pet");
     expect(state.affection).toBeGreaterThan(start.affection);
     expect(state.boredom).toBeLessThan(start.boredom);
-    expect(state.currentAnimation).toBe("jump");
+    // Pat finishes on a happy celebrate pose after the blush moment.
+    expect(state.currentAnimation).toBe("celebrate");
+  });
+
+  it("plays a blush → celebrate sequence", () => {
+    const { steps } = applyAction(newPetState(), "pet");
+    const animations = steps.map((s) => s.animation);
+    expect(animations[0]).toBe("blush");
+    expect(animations[animations.length - 1]).toBe("celebrate");
   });
 
   it("never drives affection above 100 even at the cap", () => {
@@ -150,6 +208,14 @@ describe("applyAction immutability and metadata", () => {
       const { bubble } = applyAction(newPetState(), k);
       expect(typeof bubble).toBe("string");
       expect(bubble.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("returns a non-empty steps array whose last entry matches state.currentAnimation", () => {
+    for (const k of ALL_KEYS) {
+      const { steps, state } = applyAction(newPetState(), k);
+      expect(steps.length).toBeGreaterThan(0);
+      expect(steps[steps.length - 1].animation).toBe(state.currentAnimation);
     }
   });
 });

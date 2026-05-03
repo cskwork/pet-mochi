@@ -1,4 +1,4 @@
-import { clamp, type Mood, type PetState } from "./state";
+import { clamp, type Mood, type MovementState, type PetState } from "./state";
 
 export type ActionKey = "feed" | "play" | "rest" | "pet";
 
@@ -20,68 +20,168 @@ export const ACTION_DEFINITIONS: Record<ActionKey, ActionDefinition> = {
   rest: { label: "Rest", icon: "💤", eventType: "USER_PUT_PET_TO_REST",   salience: 25 },
 };
 
+/** A single beat in a multi-frame action animation. The pet plays them in
+ *  order; the LAST step doubles as the resting pose until the next sim tick. */
+export type AnimationStep = {
+  animation: MovementState;
+  durationMs: number;
+};
+
 export type ActionResult = {
   state: PetState;
   bubble: string;
   eventType: string;
   salience: number;
+  /** Ordered animation beats. `state.currentAnimation` always equals the last
+   *  step's animation so a sim tick that fires mid-sequence settles correctly. */
+  steps: AnimationStep[];
 };
 
+type Rng = () => number;
+const defaultRng: Rng = Math.random;
+
 /**
- * Apply a tamagotchi-style interaction to the pet's state. Pure: returns a
- * brand-new PetState without mutating the input. The animation it sets is a
- * one-shot — the next simulation tick will re-derive based on stats.
+ * Apply a tamagotchi-style interaction. Pure: returns a brand-new PetState
+ * along with an animation sequence. Each action plays a multi-frame sequence
+ * that the UI scheduler walks through in real time.
+ *
+ * `rng` is exposed for deterministic play-variant picking in tests; defaults
+ * to Math.random.
  */
-export function applyAction(state: PetState, key: ActionKey): ActionResult {
+export function applyAction(
+  state: PetState,
+  key: ActionKey,
+  rng: Rng = defaultRng,
+): ActionResult {
   const nowIso = new Date().toISOString();
   const def = ACTION_DEFINITIONS[key];
 
   switch (key) {
     case "feed": {
+      const steps = feedSteps();
       const next: PetState = {
         ...state,
         hunger:    clamp(state.hunger    - 35),
         affection: clamp(state.affection + 3),
         stress:    clamp(state.stress    - 4),
-        currentAnimation: "celebrate",
+        currentAnimation: lastAnim(steps),
         lastInteractionAt: nowIso,
       };
-      return { state: next, bubble: `${state.name}: nom nom! 🍡`, eventType: def.eventType, salience: def.salience };
+      return { state: next, bubble: `${state.name}: *nom nom* 🍡`, eventType: def.eventType, salience: def.salience, steps };
     }
     case "play": {
+      const steps = playSteps(rng);
       const next: PetState = {
         ...state,
         boredom:   clamp(state.boredom   - 30),
         energy:    clamp(state.energy    - 8),
         affection: clamp(state.affection + 4),
         stress:    clamp(state.stress    - 6),
-        currentAnimation: "jump",
+        currentAnimation: lastAnim(steps),
         lastInteractionAt: nowIso,
       };
-      return { state: next, bubble: `${state.name}: wheee! 🎾`, eventType: def.eventType, salience: def.salience };
+      return { state: next, bubble: playBubble(state.name, rng), eventType: def.eventType, salience: def.salience, steps };
     }
     case "rest": {
+      const steps = restSteps();
       const next: PetState = {
         ...state,
         energy: clamp(state.energy + 25),
         stress: clamp(state.stress - 12),
-        currentAnimation: "sleep",
+        currentAnimation: lastAnim(steps),
         lastInteractionAt: nowIso,
       };
-      return { state: next, bubble: `${state.name}: zzz… 💤`, eventType: def.eventType, salience: def.salience };
+      return { state: next, bubble: `${state.name}: *yawn* …zzz 💤`, eventType: def.eventType, salience: def.salience, steps };
     }
     case "pet": {
+      const steps = petSteps();
       const next: PetState = {
         ...state,
         affection: clamp(state.affection + 1),
         boredom:   clamp(state.boredom   - 4),
         stress:    clamp(state.stress    - 2),
-        currentAnimation: "jump",
+        currentAnimation: lastAnim(steps),
         lastInteractionAt: nowIso,
       };
-      return { state: next, bubble: petReactionFor(state.mood, state.name), eventType: def.eventType, salience: def.salience };
+      return { state: next, bubble: petReactionFor(state.mood, state.name), eventType: def.eventType, salience: def.salience, steps };
     }
   }
+}
+
+function lastAnim(steps: AnimationStep[]): MovementState {
+  return steps[steps.length - 1].animation;
+}
+
+// Feed: two-frame chew cycle then a satisfied celebrate. Durations are tuned
+// so the whole sequence reads as one "meal" without dragging past the next
+// 3-second sim tick.
+function feedSteps(): AnimationStep[] {
+  return [
+    { animation: "eat",       durationMs: 380 },
+    { animation: "eat_2",     durationMs: 380 },
+    { animation: "eat",       durationMs: 380 },
+    { animation: "eat_2",     durationMs: 380 },
+    { animation: "celebrate", durationMs: 700 },
+  ];
+}
+
+// Play has three random variants so repeated taps don't look identical.
+function playSteps(rng: Rng): AnimationStep[] {
+  const r = rng();
+  if (r < 1 / 3) {
+    // Bounce: chase + leap + chase + cheer.
+    return [
+      { animation: "run",       durationMs: 400 },
+      { animation: "jump",      durationMs: 420 },
+      { animation: "run",       durationMs: 400 },
+      { animation: "celebrate", durationMs: 600 },
+    ];
+  }
+  if (r < 2 / 3) {
+    // Roll: tumble sideways then pop up cheering.
+    return [
+      { animation: "roll",      durationMs: 550 },
+      { animation: "roll",      durationMs: 550 },
+      { animation: "jump",      durationMs: 400 },
+      { animation: "celebrate", durationMs: 600 },
+    ];
+  }
+  // Wiggle: little dance — hop, cheer, hop, cheer.
+  return [
+    { animation: "jump",      durationMs: 380 },
+    { animation: "celebrate", durationMs: 500 },
+    { animation: "jump",      durationMs: 380 },
+    { animation: "celebrate", durationMs: 600 },
+  ];
+}
+
+function playBubble(name: string, rng: Rng): string {
+  const pool = [
+    `${name}: wheee! 🎾`,
+    `${name}: rolly polly!`,
+    `${name}: again, again!`,
+  ];
+  const idx = Math.min(pool.length - 1, Math.max(0, Math.floor(rng() * pool.length)));
+  return pool[idx];
+}
+
+// Rest: yawn → sit → settle into sleep. Sleep is the resting pose the tick
+// system can keep playing if energy stays low.
+function restSteps(): AnimationStep[] {
+  return [
+    { animation: "yawn",  durationMs: 700 },
+    { animation: "sit",   durationMs: 500 },
+    { animation: "sleep", durationMs: 900 },
+  ];
+}
+
+// Pat: a brief blush moment then back to a happy celebrate so the pet's
+// reaction reads even when stats are otherwise neutral.
+function petSteps(): AnimationStep[] {
+  return [
+    { animation: "blush",     durationMs: 520 },
+    { animation: "celebrate", durationMs: 500 },
+  ];
 }
 
 /**
