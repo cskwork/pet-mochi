@@ -374,12 +374,22 @@
     };
   }
 
-  // Status anchor sits top-left. Width/height depend on whether the full
-  // panel is visible or only the small floating chip.
+  // Status anchor sits top-left. When OPEN it is a horizontal pill that may
+  // run nearly the full window width on a 360-wide overlay; we treat it as a
+  // full-width top strip so the pet just needs to settle below it. When
+  // CLOSED it shrinks to a small floating chip.
   function statusBox(): { left: number; top: number; right: number; bottom: number } {
-    const w = statusOpen ? 240 : 100;
-    const h = statusOpen ? 150 : 32;
-    return { left: 8, top: 8, right: 8 + w, bottom: 8 + h };
+    if (statusOpen) {
+      // Full-width-ish strip; height includes the pill plus a little slop.
+      return {
+        left: 0,
+        top: 0,
+        right: viewportSize.width,
+        bottom: 48,
+      };
+    }
+    // Closed chip — just the small top-left blob.
+    return { left: 8, top: 8, right: 8 + 100, bottom: 8 + 32 };
   }
 
   /** Obstacles the pet should avoid wandering into. */
