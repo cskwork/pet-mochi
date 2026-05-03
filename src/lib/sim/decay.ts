@@ -8,12 +8,14 @@ import { clamp, type PetState } from "./state";
 export function applyDecay(state: PetState, elapsedSeconds: number): PetState {
   if (elapsedSeconds <= 0) return state;
 
-  // Per-second deltas (very small).
-  const dHunger = 0.05 * elapsedSeconds;
-  const dEnergy = state.currentAnimation === "sleep" ? +0.4 * elapsedSeconds : -0.04 * elapsedSeconds;
-  const dBoredom = 0.07 * elapsedSeconds;
-  const dCuriosity = 0.02 * elapsedSeconds;
-  const dStress = -0.01 * elapsedSeconds;
+  // Per-second deltas. Tuned for tamagotchi-feel visibility — bars should
+  // drift noticeably within a minute or two so the user actually sees the
+  // pet's needs change, not have to wait 25 minutes for one bar to move.
+  const dHunger = 0.10 * elapsedSeconds;
+  const dEnergy = state.currentAnimation === "sleep" ? +0.5 * elapsedSeconds : -0.08 * elapsedSeconds;
+  const dBoredom = 0.10 * elapsedSeconds;
+  const dCuriosity = 0.04 * elapsedSeconds;
+  const dStress = -0.03 * elapsedSeconds;
 
   // Loneliness — affection drops slightly when no recent interaction.
   const lastInteraction = state.lastInteractionAt
@@ -22,7 +24,7 @@ export function applyDecay(state: PetState, elapsedSeconds: number): PetState {
   const minutesSince = lastInteraction
     ? (Date.now() - lastInteraction) / 60_000
     : Infinity;
-  const dAffection = minutesSince > 30 ? -0.02 * elapsedSeconds : 0;
+  const dAffection = minutesSince > 30 ? -0.05 * elapsedSeconds : 0;
 
   return {
     ...state,

@@ -91,6 +91,46 @@ describe("applyDecay", () => {
     expect(out.energy).toBeLessThan(s.energy);
   });
 
+  // Tamagotchi-feel rates: stat changes must be noticeable in the status bars
+  // within a minute or two. Rates below are calibrated so the user actually
+  // sees the gauges drift, instead of having to wait 25+ minutes.
+  it("drains energy by at least 4 points per minute while awake", () => {
+    const s = { ...newPetState(), energy: 80 };
+    const out = applyDecay(s, 60);
+    expect(s.energy - out.energy).toBeGreaterThanOrEqual(4);
+  });
+
+  it("recovers energy by at least 25 points per minute while sleeping", () => {
+    const s = { ...newPetState(), energy: 20, currentAnimation: "sleep" as const };
+    const out = applyDecay(s, 60);
+    expect(out.energy - s.energy).toBeGreaterThanOrEqual(25);
+  });
+
+  it("raises hunger by at least 4 points per minute", () => {
+    const s = { ...newPetState(), hunger: 30 };
+    const out = applyDecay(s, 60);
+    expect(out.hunger - s.hunger).toBeGreaterThanOrEqual(4);
+  });
+
+  it("raises boredom by at least 4 points per minute", () => {
+    const s = { ...newPetState(), boredom: 20 };
+    const out = applyDecay(s, 60);
+    expect(out.boredom - s.boredom).toBeGreaterThanOrEqual(4);
+  });
+
+  it("recovers stress slowly when no negative pressure", () => {
+    const s = { ...newPetState(), stress: 50 };
+    const out = applyDecay(s, 120);
+    expect(out.stress).toBeLessThan(s.stress);
+  });
+
+  it("drops affection when no interaction in 30+ minutes", () => {
+    const longAgo = new Date(Date.now() - 31 * 60_000).toISOString();
+    const s = { ...newPetState(), affection: 60, lastInteractionAt: longAgo };
+    const out = applyDecay(s, 60);
+    expect(out.affection).toBeLessThan(s.affection);
+  });
+
   it("clamps stats between 0 and 100", () => {
     const s = { ...newPetState(), hunger: 99 };
     const out = applyDecay(s, 100_000);
