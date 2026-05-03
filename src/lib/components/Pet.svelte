@@ -36,6 +36,7 @@
   // multiple boredom drops / animation overrides on the same tick.
   let busyAction = $state<ActionKey | null>(null);
   let busyTimer: ReturnType<typeof setTimeout> | undefined;
+  let reporting = $state(false);
   let facing = $state<"left" | "right">("right");
   let recentPositive = $state(false);
   let lastInteractionAt = $state<number>(Date.now());
@@ -254,6 +255,33 @@
     scheduleSave();
   }
 
+  async function onReport() {
+    if (reporting) return;
+    reporting = true;
+    flashBubble(`${pet.name}: ✏️ scribbling a little note…`, 30_000);
+    if (!api.hasBackend) {
+      // Browser preview has no backend — give a friendly explanation rather
+      // than a silent no-op.
+      flashBubble(`${pet.name}: ✨ (notes only work in the desktop app)`, 4_000);
+      reporting = false;
+      return;
+    }
+    try {
+      const report = await api.generateInteractionReport();
+      const tail = report.usedLlm ? "" : " (saved!)";
+      flashBubble(`${pet.name}: ${report.text}${tail}`, 8_000);
+      // Surface the file path in the dev console so power users can find it
+      // without us cluttering the bubble UI.
+      console.info("[mochi] report saved →", report.savedPath);
+      pet = { ...pet, currentAnimation: "celebrate" };
+    } catch (err) {
+      console.warn("generateInteractionReport failed", err);
+      flashBubble(`${pet.name}: ✨ couldn't write right now`, 3_000);
+    } finally {
+      reporting = false;
+    }
+  }
+
   function onPointerMove(e: PointerEvent) {
     cursor = { x: e.clientX, y: e.clientY };
   }
@@ -326,8 +354,9 @@
 
   // Action panel sits bottom-right; estimate generously so the hit-test slop
   // forgives margin/padding/font drift without mis-classifying the cursor.
+  // Width grew to accommodate the 5th (Report) button + divider.
   function actionsBox(): { left: number; top: number; right: number; bottom: number } {
-    const w = 260;
+    const w = 340;
     const h = 76;
     return {
       left: viewportSize.width - w - 8,
@@ -534,7 +563,7 @@
   </div>
 
   <div class="actions-anchor">
-    <PetActions onAction={onAction} busy={busyAction} />
+    <PetActions onAction={onAction} onReport={onReport} busy={busyAction} reporting={reporting} />
   </div>
 </div>
 

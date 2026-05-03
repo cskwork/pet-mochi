@@ -3,10 +3,15 @@
 
   type Props = {
     onAction: (action: ActionKey) => void;
+    /** Optional separate handler for the report button (a meta-action that
+        doesn't mutate pet state and so isn't an ActionKey). */
+    onReport?: () => void;
     /** When set, that action is briefly disabled to prevent double-tap spam. */
     busy?: ActionKey | null;
+    /** True while a report request is in flight; shows a writing indicator. */
+    reporting?: boolean;
   };
-  let { onAction, busy = null }: Props = $props();
+  let { onAction, onReport, busy = null, reporting = false }: Props = $props();
 
   // Order is intentional: feed/play together (active), pat/rest together (calm).
   const ORDER: ActionKey[] = ["feed", "play", "pet", "rest"];
@@ -40,17 +45,46 @@
       <span class="label">{a.label}</span>
     </button>
   {/each}
+
+  {#if onReport}
+    <span class="divider" aria-hidden="true"></span>
+    <button
+      type="button"
+      class="action report"
+      class:busy={reporting}
+      onclick={() => onReport?.()}
+      disabled={reporting}
+      title="Mochi writes a tiny note about your time together"
+      aria-label="Generate report"
+    >
+      <span class="icon" aria-hidden="true">{reporting ? "✏️" : "📔"}</span>
+      <span class="label">{reporting ? "Writing" : "Report"}</span>
+    </button>
+  {/if}
 </nav>
 
 <style>
   .actions {
     display: flex;
+    align-items: center;
     gap: 6px;
     background: rgba(255, 255, 255, 0.94);
     padding: 8px;
     border-radius: 14px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
     pointer-events: auto;
+  }
+  .divider {
+    align-self: stretch;
+    width: 1px;
+    margin: 4px 2px;
+    background: rgba(0, 0, 0, 0.08);
+  }
+  .action.report {
+    background: rgba(255, 232, 245, 0.9);
+  }
+  .action.report:hover {
+    background: rgba(255, 200, 225, 0.95);
   }
   .action {
     display: flex;

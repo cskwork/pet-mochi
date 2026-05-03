@@ -1,7 +1,13 @@
 use crate::db::Db;
 use crate::error::{AppError, AppResult};
 use crate::llm::ollama::OllamaProvider;
-use crate::llm::prompts::{file_summary_prompt, memory_extraction_prompt, pet_reply_prompt, reflection_prompt};
+use crate::llm::prompts::{
+    file_summary_prompt, interaction_report_prompt, memory_extraction_prompt, pet_reply_prompt,
+    reflection_prompt,
+};
+use crate::llm::report::{
+    build_report_markdown, canned_report_text, compress_events_for_report, report_filename,
+};
 use crate::llm::provider::{LlmProvider, LlmRequest};
 use crate::llm::CooldownManager;
 use crate::models::{
@@ -667,6 +673,76 @@ fn format_interaction_line(ix: &Interaction) -> String {
 #[tauri::command]
 pub fn get_last_reflection(state: State<'_, AppState>) -> AppResult<Option<DailyReflection>> {
     state.db.last_reflection()
+}
+
+// ============== Interaction report ==============
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InteractionReport {
+    pub text: String,
+    pub saved_path: String,
+    pub used_llm: bool,
+    pub event_count: usize,
+}
+
+/// Generate a short, friendly note from Mochi summarising recent interactions.
+/// Uses the LLM when available; falls back to a deterministic canned line so a
+/// missing Ollama never breaks the button. Either way, a markdown file is
+/// written into the sandbox's `notes/` folder.
+#[tauri::command]
+pub async fn generate_interaction_report(
+    state: State<'_, AppState>,
+) -> AppResult<InteractionReport> {
+    let db = state.db.clone();
+    let llm_slot = state.llm.clone();
+    let cooldown = state.cooldown.clone();
+    let home = state.pet_home.clone();
+
+    let pet = db.clone().run(|db| load_or_init_pet_state(db)).await?;
+    // 50 most recent events is enough for a "today-ish" feel without bloating
+    // the prompt context (gemma4:e2b has a small window).
+    let events = db.clone().run(|db| db.recent_events(50)).await?;
+    let compressed = compress_events_for_report(&events);
+
+    let mut summary_text = canned_report_text(&pet, &events);
+    let mut used_llm = false;
+
+    let provider_opt = llm_slot.read().clone();
+    if let Some(provider) = provider_opt {
+        if cooldown.try_acquire("llm_report", Duration::from_secs(30)) {
+            let (system, prompt) = interaction_report_prompt(&pet, &compressed);
+            match provider
+                .complete(LlmRequest {
+                    system: Some(system),
+                    prompt,
+                    max_tokens: Some(80),
+                    temperature: Some(0.7),
+                    model: None,
+                })
+                .await
+            {
+                Ok(resp) if !resp.text.trim().is_empty() => {
+                    summary_text = sanitize_llm_text(&resp.text);
+                    used_llm = true;
+                }
+                Ok(_) => log::warn!("interaction report LLM returned empty text"),
+                Err(e) => log::warn!("interaction report LLM failed: {e}"),
+            }
+        }
+    }
+
+    let now = now_rfc3339();
+    let markdown = build_report_markdown(&pet, &summary_text, &events, &now);
+    let file_name = report_filename(&now);
+    let written = write_note(&home, &file_name, &markdown)?;
+
+    Ok(InteractionReport {
+        text: summary_text,
+        saved_path: written.to_string_lossy().to_string(),
+        used_llm,
+        event_count: events.len(),
+    })
 }
 
 // ============== Event log ==============

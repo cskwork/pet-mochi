@@ -57,6 +57,13 @@ export type EventLogEntry = {
   createdAt: string;
 };
 
+export type InteractionReport = {
+  text: string;
+  savedPath: string;
+  usedLlm: boolean;
+  eventCount: number;
+};
+
 export type DailyReflection = {
   id: string;
   reflectionDate: string;
@@ -106,6 +113,8 @@ export const api = {
 
   runDailyReflection: () => invoke<DailyReflection>("run_daily_reflection"),
   getLastReflection: () => invoke<DailyReflection | null>("get_last_reflection"),
+  generateInteractionReport: () =>
+    invoke<InteractionReport>("generate_interaction_report"),
 
   getEventLog: (limit = 100) => invoke<EventLogEntry[]>("get_event_log", { limit }),
   logEvent: (eventType: string, payload?: string, salience?: number) =>
