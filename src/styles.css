@@ -40,7 +40,7 @@ button {
 }
 
 button:hover {
-  background: var(--mochi-deep-pink);
+  background: #c2185b;
   color: white;
 }
 
@@ -74,6 +74,12 @@ select:focus-visible {
 /* Settings panel uses an opaque page background */
 body.settings-page {
   background: var(--mochi-cream);
+}
+
+body.settings-page,
+body.settings-page * {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 @media (prefers-reduced-motion: reduce) {
