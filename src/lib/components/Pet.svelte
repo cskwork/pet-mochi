@@ -2,12 +2,19 @@
   import { onMount, onDestroy } from "svelte";
   import MochiSprite from "./MochiSprite.svelte";
   import ChatBubble from "./ChatBubble.svelte";
-  import ChatInput from "./ChatInput.svelte";
+  import PetActions from "./PetActions.svelte";
+  import PetStatus from "./PetStatus.svelte";
   import {
     deriveTimeOfDay,
     nextWanderPosition,
     newPetState,
     runTick,
+    applyAction,
+    nextNudge,
+    rememberNudge,
+    newNudgeState,
+    type ActionKey,
+    type NudgeState,
     type PetState,
     type RuntimeContext,
   } from "../sim";
@@ -24,12 +31,16 @@
   let cursor = $state({ x: 0, y: 0 });
   let bubbleText = $state<string | null>(null);
   let bubbleOpen = $state(false);
-  let chatOpen = $state(false);
   let blink = $state(false);
+  // Briefly disable a button right after it fires so a double-tap can't stack
+  // multiple boredom drops / animation overrides on the same tick.
+  let busyAction = $state<ActionKey | null>(null);
+  let busyTimer: ReturnType<typeof setTimeout> | undefined;
   let facing = $state<"left" | "right">("right");
   let recentPositive = $state(false);
   let lastInteractionAt = $state<number>(Date.now());
   let lastTickAt = $state<number>(Date.now());
+  let nudgeState: NudgeState = newNudgeState();
   let saving = $state(false);
   let viewportSize = $state({ width: 360, height: 360 });
 
@@ -143,6 +154,20 @@
     }
 
     pet = next;
+
+    // Spontaneous canned nudge if any mood threshold is crossed (priority +
+    // cooldowns enforced inside `nextNudge`). LLM is intentionally not in this
+    // path — nudges must work even when Ollama is offline (PRD §5.2).
+    const nudge = nextNudge(pet, nudgeState, now);
+    if (nudge) {
+      flashBubble(`${pet.name}: ${nudge.bubble}`, 2_500);
+      if (nudge.animation) {
+        // Override this tick's animation; the next tick re-derives from stats.
+        pet = { ...pet, currentAnimation: nudge.animation };
+      }
+      nudgeState = rememberNudge(nudgeState, nudge, now);
+    }
+
     eventBus.dispatch({ type: "IDLE_TICK" }, pet);
 
     // Edge-trigger USER_RETURNED on the away→returning transition so
@@ -205,57 +230,28 @@
   }
 
   async function handlePetClick() {
+    await onAction("pet");
+  }
+
+  function flashBusy(key: ActionKey, ms = 700) {
+    if (busyTimer) clearTimeout(busyTimer);
+    busyAction = key;
+    busyTimer = setTimeout(() => {
+      busyAction = null;
+      busyTimer = undefined;
+    }, ms);
+  }
+
+  async function onAction(key: ActionKey) {
+    if (busyAction === key) return;
+    flashBusy(key);
     lastInteractionAt = Date.now();
     recentPositive = true;
-    pet = {
-      ...pet,
-      affection: Math.min(100, pet.affection + 1),
-      boredom: Math.max(0, pet.boredom - 4),
-      currentAnimation: "jump",
-      lastInteractionAt: new Date().toISOString(),
-    };
-    flashBubble(reactionFor(pet.mood, pet.name), 2_500);
-    await api
-      .logEvent("USER_CLICKED_PET", undefined, 20)
-      .catch(() => undefined);
+    const { state, bubble, eventType, salience } = applyAction(pet, key);
+    pet = state;
+    flashBubble(bubble, 2_500);
+    await api.logEvent(eventType, undefined, salience).catch(() => undefined);
     scheduleSave();
-  }
-
-  function reactionFor(mood: PetState["mood"], name: string): string {
-    switch (mood) {
-      case "tired":
-        return `${name}: *sleepy nuzzle*`;
-      case "hungry":
-        return `${name}: *wants a snack*`;
-      case "bored":
-        return `${name}: yes! play!`;
-      case "lonely":
-        return `${name}: ♥ thank you`;
-      default:
-        return `${name}: ✿ hi`;
-    }
-  }
-
-  async function onSendMessage(text: string) {
-    if (!text.trim()) return;
-    lastInteractionAt = Date.now();
-    flashBubble(`${pet.name}: …`, 2_000);
-    try {
-      const reply = await api.sendMessage(text);
-      flashBubble(`${pet.name}: ${reply.text}`, 6_000);
-      // Adopt the backend-authoritative state (covers boredom, affection,
-      // lastLlmCallAt) and only override the fields the UI owns (animation).
-      pet = { ...reply.pet, currentAnimation: "celebrate" };
-      // Backend already persisted; no need to schedule a redundant save that
-      // would overwrite future tick-driven mood/animation transitions.
-    } catch (err) {
-      const msg = String((err as Error)?.message ?? err);
-      if (msg.includes("cooldown")) {
-        flashBubble(`${pet.name}: shh, give me a moment`, 2_000);
-      } else {
-        flashBubble(`${pet.name}: (offline)`, 3_000);
-      }
-    }
   }
 
   function onPointerMove(e: PointerEvent) {
@@ -328,21 +324,37 @@
     return { left, top, side: (placeBelow ? "below" : "above") as "above" | "below", tailX };
   });
 
-  function dockBox(): { left: number; top: number; right: number; bottom: number } {
-    // Dock toggle is 44x44 anchored to bottom-right; when open, the panel
-    // stacks ABOVE the toggle (column layout) at ~260x76. Hit-test the union.
-    const toggleW = 44;
-    const toggleH = 44;
-    const panelW = chatOpen ? 260 : 0;
-    const panelH = chatOpen ? 76 : 0;
-    const w = Math.max(toggleW, panelW);
-    const h = toggleH + (chatOpen ? panelH + 6 : 0);
+  // Action panel sits bottom-right; estimate generously so the hit-test slop
+  // forgives margin/padding/font drift without mis-classifying the cursor.
+  function actionsBox(): { left: number; top: number; right: number; bottom: number } {
+    const w = 260;
+    const h = 76;
     return {
       left: viewportSize.width - w - 8,
       top: viewportSize.height - h - 8,
       right: viewportSize.width - 8,
       bottom: viewportSize.height - 8,
     };
+  }
+
+  // Status panel sits top-left.
+  function statusBox(): { left: number; top: number; right: number; bottom: number } {
+    const w = 240;
+    const h = 130;
+    return { left: 8, top: 8, right: 8 + w, bottom: 8 + h };
+  }
+
+  function isInsideRect(
+    x: number,
+    y: number,
+    r: { left: number; top: number; right: number; bottom: number },
+  ): boolean {
+    return (
+      x >= r.left - HIT_PAD &&
+      x <= r.right + HIT_PAD &&
+      y >= r.top - HIT_PAD &&
+      y <= r.bottom + HIT_PAD
+    );
   }
 
   function isInsideInteractive(x: number, y: number): boolean {
@@ -352,13 +364,8 @@
       y >= position.y - HIT_PAD &&
       y <= position.y + petSize + HIT_PAD
     ) return true;
-    const d = dockBox();
-    if (
-      x >= d.left - HIT_PAD &&
-      x <= d.right + HIT_PAD &&
-      y >= d.top - HIT_PAD &&
-      y <= d.bottom + HIT_PAD
-    ) return true;
+    if (isInsideRect(x, y, actionsBox())) return true;
+    if (isInsideRect(x, y, statusBox())) return true;
     if (bubbleOpen) {
       // Bubble is positioned absolutely at bubblePlacement.{left,top}; size is
       // BUBBLE_W x BUBBLE_H. Hit-test that rect with HIT_PAD slop.
@@ -479,6 +486,7 @@
     if (blinkInnerTimer) clearTimeout(blinkInnerTimer);
     if (bubbleTimer) clearTimeout(bubbleTimer);
     if (saveTimer) clearTimeout(saveTimer);
+    if (busyTimer) clearTimeout(busyTimer);
     if (hitTestTimer) clearInterval(hitTestTimer);
     window.removeEventListener("resize", onResize);
     window.removeEventListener("pointermove", onPointerMove);
@@ -521,24 +529,12 @@
     </div>
   {/if}
 
-  <div class="dock" class:open={chatOpen}>
-    {#if chatOpen}
-      <div id="chat-dock-panel" class="dock-panel">
-        <ChatInput onSubmit={onSendMessage} />
-        <span class="dock-status" role="status" aria-live="polite">
-          {pet.mood} · ♥{pet.relationshipLevel}{saving ? " · saving" : ""}
-        </span>
-      </div>
-    {/if}
-    <button
-      class="dock-toggle"
-      onclick={() => (chatOpen = !chatOpen)}
-      aria-label={chatOpen ? "Close chat" : "Open chat"}
-      aria-expanded={chatOpen}
-      aria-controls="chat-dock-panel"
-    >
-      {chatOpen ? "×" : "💬"}
-    </button>
+  <div class="status-anchor">
+    <PetStatus {pet} {saving} />
+  </div>
+
+  <div class="actions-anchor">
+    <PetActions onAction={onAction} busy={busyAction} />
   </div>
 </div>
 
@@ -564,40 +560,16 @@
     width: 220px;
     pointer-events: auto;
   }
-  .dock {
+  .status-anchor {
+    position: absolute;
+    left: 8px;
+    top: 8px;
+    pointer-events: auto;
+  }
+  .actions-anchor {
     position: absolute;
     right: 8px;
     bottom: 8px;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 6px;
     pointer-events: auto;
-  }
-  .dock-toggle {
-    width: 44px;
-    height: 44px;
-    border-radius: 50%;
-    font-size: 18px;
-    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15);
-  }
-  .dock-panel {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    align-items: stretch;
-    background: rgba(255, 255, 255, 0.94);
-    padding: 8px;
-    border-radius: 14px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
-    min-width: 240px;
-  }
-  .dock-status {
-    align-self: flex-start;
-    background: rgba(255, 220, 232, 0.65);
-    padding: 3px 8px;
-    border-radius: 999px;
-    font-size: 11px;
-    color: var(--mochi-text);
   }
 </style>
