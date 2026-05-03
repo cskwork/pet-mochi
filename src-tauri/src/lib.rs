@@ -88,6 +88,7 @@ pub fn run() {
             commands::approve_file,
             commands::run_daily_reflection,
             commands::get_last_reflection,
+            commands::generate_interaction_report,
             commands::get_event_log,
             commands::log_event,
             commands::list_skills,
