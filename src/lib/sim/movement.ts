@@ -24,7 +24,6 @@ export function chooseMovement(
   if (ctx.cursorNearPet) return "look_cursor";
   if (state.boredom > 75) return "walk";
   if (state.mood === "happy" && ctx.recentPositiveEvent) return "celebrate";
-  if (state.stress > 80) return "hide";
   return pick(IDLE_VARIANTS, rng);
 }
 
