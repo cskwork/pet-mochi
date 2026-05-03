@@ -1,0 +1,36 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# Dependencies
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Tauri
+src-tauri/target/
+src-tauri/gen/schemas
+
+# Pet runtime data
+pet_home/
+*.db
+*.db-journal
+
+# Local review artifacts
+codex-review-out.txt
+codex-uiux-out.txt
+codex-uiux-prompt.md
+.codex-*

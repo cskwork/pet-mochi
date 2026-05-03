@@ -1,0 +1,88 @@
+:root {
+  --mochi-bg: rgba(255, 240, 245, 0);
+  --mochi-text: #2c2030;
+  --mochi-pink: #ffc6d3;
+  --mochi-deep-pink: #ff8aa6;
+  --mochi-cream: #fff7ec;
+  --mochi-shadow: rgba(0, 0, 0, 0.18);
+  font-family: "Inter", "Noto Sans KR", -apple-system, system-ui, sans-serif;
+  color: var(--mochi-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#app {
+  width: 100vw;
+  height: 100vh;
+  background: transparent;
+  position: relative;
+}
+
+button {
+  font-family: inherit;
+  border: 0;
+  background: var(--mochi-pink);
+  color: var(--mochi-text);
+  padding: 6px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 120ms ease;
+  min-height: 32px;
+}
+
+button:hover {
+  background: var(--mochi-deep-pink);
+  color: white;
+}
+
+input,
+textarea,
+select {
+  font-family: inherit;
+  font-size: 13px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid #e7d1da;
+  outline: none;
+  background: white;
+  color: var(--mochi-text);
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  border-color: var(--mochi-deep-pink);
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--mochi-deep-pink);
+  outline-offset: 2px;
+}
+
+/* Settings panel uses an opaque page background */
+body.settings-page {
+  background: var(--mochi-cream);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

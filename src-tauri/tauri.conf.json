@@ -1,0 +1,57 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "pet-mochi",
+  "version": "0.1.0",
+  "identifier": "com.petmochi.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Mochi",
+        "width": 360,
+        "height": 360,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "resizable": false,
+        "skipTaskbar": false,
+        "shadow": false,
+        "center": false,
+        "x": 100,
+        "y": 100
+      },
+      {
+        "label": "settings",
+        "title": "Mochi — Settings",
+        "url": "index.html#/settings",
+        "width": 520,
+        "height": 640,
+        "decorations": true,
+        "transparent": false,
+        "resizable": true,
+        "visible": false,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost http://localhost:11434"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/icon.png"
+    ],
+    "category": "Entertainment",
+    "shortDescription": "Local-first AI digital pet",
+    "longDescription": "Mochi is a local-first desktop digital pet that moves, remembers, and chats through optional local LLMs."
+  },
+  "plugins": {}
+}
