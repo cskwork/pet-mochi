@@ -64,6 +64,8 @@ export function applyAction(
         hunger:    clamp(state.hunger    - 35),
         affection: clamp(state.affection + 3),
         stress:    clamp(state.stress    - 4),
+        // Any user attention satisfies a bit of curiosity — clears the "?".
+        curiosity: clamp(state.curiosity - 8),
         currentAnimation: lastAnim(steps),
         lastInteractionAt: nowIso,
       };
@@ -77,6 +79,8 @@ export function applyAction(
         energy:    clamp(state.energy    - 8),
         affection: clamp(state.affection + 4),
         stress:    clamp(state.stress    - 6),
+        // Any user attention satisfies a bit of curiosity — clears the "?".
+        curiosity: clamp(state.curiosity - 8),
         currentAnimation: lastAnim(steps),
         lastInteractionAt: nowIso,
       };
@@ -88,6 +92,8 @@ export function applyAction(
         ...state,
         energy: clamp(state.energy + 25),
         stress: clamp(state.stress - 12),
+        // Any user attention satisfies a bit of curiosity — clears the "?".
+        curiosity: clamp(state.curiosity - 8),
         currentAnimation: lastAnim(steps),
         lastInteractionAt: nowIso,
       };
@@ -100,6 +106,8 @@ export function applyAction(
         affection: clamp(state.affection + 1),
         boredom:   clamp(state.boredom   - 4),
         stress:    clamp(state.stress    - 2),
+        // Any user attention satisfies a bit of curiosity — clears the "?".
+        curiosity: clamp(state.curiosity - 8),
         currentAnimation: lastAnim(steps),
         lastInteractionAt: nowIso,
       };
