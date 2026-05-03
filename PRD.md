@@ -501,7 +501,7 @@ Desktop App
 type PetState = {
   id: string;
   name: string;
-  mood: "happy" | "curious" | "tired" | "hungry" | "bored" | "lonely" | "focused";
+  mood: "happy" | "curious" | "tired" | "hungry" | "bored" | "lonely";
   hunger: number;
   energy: number;
   affection: number;
@@ -687,8 +687,8 @@ function deriveMood(state: PetState): PetState["mood"] {
   if (state.energy < 20) return "tired";
   if (state.hunger > 75) return "hungry";
   if (state.boredom > 70) return "bored";
+  if (state.affection < 20) return "lonely";
   if (state.curiosity > 70) return "curious";
-  if (state.stress > 65) return "focused";
   return "happy";
 }
 ```
