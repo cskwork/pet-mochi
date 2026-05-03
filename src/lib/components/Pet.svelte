@@ -344,13 +344,44 @@
     await handlePetClick();
   }
 
-  // Place the bubble above the pet by default; flip below if the top would
-  // clip the viewport. Always clamp horizontally so the bubble stays visible.
+  // Place the bubble so it never falls behind the status pill or the actions
+  // panel. Default: above the pet. Flip below if above would clip the
+  // viewport top OR overlap the status strip. If "below" would overlap the
+  // actions panel, fall back to above and accept a touch of clipping rather
+  // than hide the dialogue entirely.
   let bubblePlacement = $derived.by(() => {
     const centerX = position.x + petSize / 2;
+
+    // Vertical bounds the bubble must respect.
+    const status = statusBox();
+    const actions = actionsBox();
+    const topClear   = Math.max(BUBBLE_MARGIN, status.bottom + BUBBLE_GAP);
+    const bottomClear = Math.min(viewportSize.height - BUBBLE_MARGIN, actions.top - BUBBLE_GAP);
+
     const aboveTop = position.y - BUBBLE_H - BUBBLE_GAP;
-    const placeBelow = aboveTop < BUBBLE_MARGIN;
-    const top = placeBelow ? position.y + petSize + BUBBLE_GAP : aboveTop;
+    const belowTop = position.y + petSize + BUBBLE_GAP;
+
+    const aboveFits = aboveTop >= topClear;
+    const belowFits = belowTop + BUBBLE_H <= bottomClear;
+
+    let placeBelow: boolean;
+    let top: number;
+    if (aboveFits) {
+      placeBelow = false;
+      top = aboveTop;
+    } else if (belowFits) {
+      placeBelow = true;
+      top = belowTop;
+    } else {
+      // Neither side fully clears; pick the side with the most room.
+      const aboveRoom = position.y - topClear;
+      const belowRoom = bottomClear - (position.y + petSize);
+      placeBelow = belowRoom > aboveRoom;
+      top = placeBelow
+        ? Math.max(belowTop, bottomClear - BUBBLE_H)
+        : Math.min(aboveTop, topClear);
+    }
+
     let left = centerX - BUBBLE_W / 2;
     left = Math.max(
       BUBBLE_MARGIN,
