@@ -10,6 +10,7 @@
    *   to the next file. We never auto-dismiss — consent must be explicit.
    */
   import { onMount, tick } from "svelte";
+  import { nextTrapIndex } from "./focusTrap";
 
   type Props = {
     fileName: string;
@@ -23,6 +24,7 @@
   let busy = $state(false);
   let errorMsg = $state<string | null>(null);
   let primaryBtn: HTMLButtonElement | null = null;
+  let secondaryBtn: HTMLButtonElement | null = null;
 
   async function clickRead() {
     if (busy) return;
@@ -44,11 +46,25 @@
   }
 
   function onKeydown(e: KeyboardEvent) {
-    if (busy) return;
-    if (e.key === "Escape") {
+    if (e.key === "Escape" && !busy) {
       e.preventDefault();
       clickSkip();
+      return;
     }
+    if (e.key !== "Tab") return;
+    // Focus trap: cycle Tab/Shift+Tab among the dialog's focusable buttons so
+    // keyboard users can't escape the alertdialog into the underlying pet UI.
+    const order: Array<HTMLButtonElement | null> = [primaryBtn, secondaryBtn];
+    const focusables = order.filter((b): b is HTMLButtonElement => b !== null && !b.disabled);
+    const currentIndex = focusables.indexOf(document.activeElement as HTMLButtonElement);
+    const target = nextTrapIndex({
+      currentIndex,
+      count: focusables.length,
+      shift: e.shiftKey,
+    });
+    if (target === -1) return;
+    e.preventDefault();
+    focusables[target]?.focus();
   }
 
   onMount(async () => {
@@ -60,6 +76,7 @@
 <div
   class="consent"
   role="alertdialog"
+  aria-modal="true"
   aria-labelledby="inbox-consent-title"
   aria-describedby="inbox-consent-desc"
   onkeydown={onKeydown}
@@ -83,7 +100,13 @@
     >
       {busy ? "Reading…" : "Read"}
     </button>
-    <button type="button" class="secondary" onclick={clickSkip} disabled={busy}>
+    <button
+      bind:this={secondaryBtn}
+      type="button"
+      class="secondary"
+      onclick={clickSkip}
+      disabled={busy}
+    >
       Skip
     </button>
   </div>
