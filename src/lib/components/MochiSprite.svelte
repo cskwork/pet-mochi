@@ -100,7 +100,7 @@
   <img
     class="sprite"
     src={currentSrc}
-    alt="Mochi pet"
+    alt=""
     width={size}
     height={size}
     draggable="false"
@@ -116,6 +116,18 @@
 
   {#if mood === "curious" && !isAsleep}
     <div class="mark mark-curious" aria-hidden="true">?</div>
+  {/if}
+
+  {#if mood === "hungry" && !isAsleep && animation !== "eat" && animation !== "eat_2"}
+    <div class="mark mark-hungry" aria-hidden="true">🍡</div>
+  {/if}
+
+  {#if mood === "bored" && !isAsleep && animation !== "blush" && animation !== "celebrate" && animation !== "yawn"}
+    <div class="mark mark-bored" aria-hidden="true">…</div>
+  {/if}
+
+  {#if mood === "lonely" && !isAsleep && animation !== "blush"}
+    <div class="mark mark-lonely" aria-hidden="true">♡</div>
   {/if}
 
   {#if mood === "happy" && animation === "celebrate"}
@@ -339,6 +351,30 @@
     color: #d27ba1;
     font-size: calc(var(--size) * 0.18);
     animation: float 1.1s ease-in-out infinite 0.1s;
+  }
+
+  .mark-hungry {
+    top: 6%;
+    right: 8%;
+    font-size: calc(var(--size) * 0.16);
+    animation: float 1.4s ease-in-out infinite;
+  }
+
+  .mark-bored {
+    top: 8%;
+    right: 10%;
+    color: #6a5a6a;
+    font-size: calc(var(--size) * 0.20);
+    letter-spacing: 1px;
+    animation: float 2s ease-in-out infinite;
+  }
+
+  .mark-lonely {
+    top: 16%;
+    right: 8%;
+    color: #b3739a;
+    font-size: calc(var(--size) * 0.15);
+    animation: float 1.8s ease-in-out infinite;
   }
 
   @keyframes pop {

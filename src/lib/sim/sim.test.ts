@@ -7,6 +7,7 @@ import {
   deriveMood,
   newPetState,
   nextWanderPosition,
+  roundStats,
   runTick,
   type PetState,
   type RuntimeContext,
@@ -359,5 +360,65 @@ describe("computeAwayMinutes / persistence regression", () => {
     const minutes = computeAwayMinutes(after.lastInteractionAt, now);
     expect(minutes).not.toBeNull();
     expect(Math.abs(minutes! - awayMinutesExpected)).toBeLessThanOrEqual(1);
+  });
+});
+
+describe("roundStats (persistence boundary)", () => {
+  // The backend's PetState models stat fields as `i32`. Tauri's serde
+  // deserialization will reject fractional inputs with "invalid type:
+  // floating point". applyDecay accumulates fractions every tick, so the
+  // raw `pet` is almost always non-integer after the first ~3 seconds —
+  // this helper is the canonical pre-save sanitization.
+  it("rounds every integer stat field", () => {
+    const fractional: PetState = {
+      ...newPetState(),
+      hunger: 49.7,
+      energy: 80.4,
+      affection: 50.5,
+      boredom: 20.123,
+      curiosity: 60.999,
+      stress: 9.4,
+      trust: 50.5001,
+      relationshipLevel: 0.999754,
+    };
+    const rounded = roundStats(fractional);
+    // Every integer field is now a whole number.
+    for (const key of [
+      "hunger",
+      "energy",
+      "affection",
+      "boredom",
+      "curiosity",
+      "stress",
+      "trust",
+      "relationshipLevel",
+    ] as const) {
+      expect(Number.isInteger(rounded[key])).toBe(true);
+    }
+    // Spot-check the rounding direction matches Math.round semantics.
+    expect(rounded.hunger).toBe(50);
+    expect(rounded.energy).toBe(80);
+    expect(rounded.relationshipLevel).toBe(1);
+  });
+
+  it("does not mutate the input", () => {
+    const fractional: PetState = { ...newPetState(), affection: 49.7 };
+    const snapshot = { ...fractional };
+    roundStats(fractional);
+    expect(fractional).toEqual(snapshot);
+  });
+
+  it("preserves non-numeric fields verbatim", () => {
+    const s: PetState = {
+      ...newPetState(),
+      hunger: 49.7,
+      lastInteractionAt: "2026-05-03T12:30:00Z",
+      currentAnimation: "yawn",
+    };
+    const r = roundStats(s);
+    expect(r.lastInteractionAt).toBe(s.lastInteractionAt);
+    expect(r.currentAnimation).toBe(s.currentAnimation);
+    expect(r.id).toBe(s.id);
+    expect(r.name).toBe(s.name);
   });
 });

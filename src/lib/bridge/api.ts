@@ -89,6 +89,7 @@ export const api = {
 
   getPetState: () => invoke<PetState>("get_pet_state"),
   savePetState: (pet: PetState) => invoke<PetState>("save_pet_state", { pet }),
+  quitApp: () => invoke<void>("quit_app"),
 
   getSettings: () => invoke<Settings>("get_settings"),
   saveSettings: (settings: Settings) => invoke<Settings>("save_settings", { settings }),

@@ -92,6 +92,28 @@ export function computeAwayMinutes(
   return (now - t) / 60_000;
 }
 
+/**
+ * Round all integer stat fields to whole numbers. The backend models these as
+ * `i32` (see `src-tauri/src/models.rs`), so passing a fractional value to
+ * `save_pet_state` would fail Tauri's serde deserialization with
+ * "invalid type: floating point". The simulator keeps fractional values
+ * internally so small decay rates accumulate smoothly across ticks; this
+ * helper is the canonical conversion at the persistence boundary.
+ */
+export function roundStats(state: PetState): PetState {
+  return {
+    ...state,
+    hunger: Math.round(state.hunger),
+    energy: Math.round(state.energy),
+    affection: Math.round(state.affection),
+    boredom: Math.round(state.boredom),
+    curiosity: Math.round(state.curiosity),
+    stress: Math.round(state.stress),
+    trust: Math.round(state.trust),
+    relationshipLevel: Math.round(state.relationshipLevel),
+  };
+}
+
 export function newPetState(name = "Mochi"): PetState {
   const now = new Date().toISOString();
   return {

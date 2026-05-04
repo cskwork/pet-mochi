@@ -163,6 +163,14 @@ describe("applyAction(pet)", () => {
     expect(animations[animations.length - 1]).toBe("celebrate");
   });
 
+  it("prepends a yawn wake-up when the pet was sleeping", () => {
+    const start = { ...newPetState(), currentAnimation: "sleep" as const };
+    const { steps } = applyAction(start, "pet");
+    const animations = steps.map((s) => s.animation);
+    // Wake-up beat must precede the blush so the sleep→celebrate snap is gone.
+    expect(animations).toEqual(["yawn", "blush", "celebrate"]);
+  });
+
   it("never drives affection above 100 even at the cap", () => {
     const start = { ...newPetState(), affection: 100 };
     const { state } = applyAction(start, "pet");

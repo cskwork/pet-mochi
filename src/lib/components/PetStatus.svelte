@@ -51,7 +51,7 @@
   <aside class="status" aria-label="Pet status">
     <span class="meta name">{pet.name}</span>
     <span class="meta mood">{pet.mood}</span>
-    <span class="meta bond" title="Bond level">♥{pet.relationshipLevel}</span>
+    <span class="meta bond" title="Bond level">♥{Math.round(pet.relationshipLevel)}</span>
     {#each bars as b (b.key)}
       <span
         class="gauge"
