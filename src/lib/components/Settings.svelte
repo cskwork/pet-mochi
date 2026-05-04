@@ -223,7 +223,7 @@
   {:else if loadError}
     <p class="warn">Failed to load settings: {loadError}<br /><button onclick={load}>Retry</button></p>
   {:else if !settings}
-    <p>Loading…</p>
+    <p role="status" aria-live="polite">Loading settings…</p>
   {:else}
     {#if actionError}
       <p class="warn" role="alert">{actionError}</p>
