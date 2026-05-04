@@ -6,14 +6,15 @@
     type Memory,
     type InboxFile,
     type EventLogEntry,
-    type DailyReflection,
+    type StatusReport,
   } from "../bridge/api";
 
   let settings = $state<Settings | null>(null);
   let memories = $state<Memory[]>([]);
   let inbox = $state<InboxFile[]>([]);
   let events = $state<EventLogEntry[]>([]);
-  let lastReflection = $state<DailyReflection | null>(null);
+  let recentReports = $state<StatusReport[]>([]);
+  let runningReport = $state(false);
   let savingMessage = $state("");
   let exportPath = $state<string | null>(null);
   let activeTab = $state<"general" | "memory" | "sandbox" | "developer">("general");
@@ -31,18 +32,18 @@
   async function load() {
     if (!api.hasBackend) return;
     try {
-      const [s, m, ix, ev, lr] = await Promise.all([
+      const [s, m, ix, ev, rr] = await Promise.all([
         api.getSettings(),
         api.listMemories(200),
         api.listInboxFiles(),
         api.getEventLog(50),
-        api.getLastReflection(),
+        api.listStatusReports(10),
       ]);
       settings = s;
       memories = m;
       inbox = ix;
       events = ev;
-      lastReflection = lr;
+      recentReports = rr;
       loadError = null;
     } catch (e) {
       loadError = (e as Error)?.message ?? String(e);
@@ -122,12 +123,32 @@
     }
   }
 
-  async function runReflection() {
+  /** §9.8 — manually trigger a status report (debug / on-demand). The pet's
+   *  normal flow fires this autonomously when (12h elapsed AND idle window);
+   *  this button is here so the user can see one immediately without waiting.
+   */
+  async function runReportNow() {
+    if (runningReport) return;
+    runningReport = true;
     try {
-      lastReflection = await api.runDailyReflection();
+      await api.runStatusReport();
+      recentReports = await api.listStatusReports(10);
     } catch (e) {
-      showError("reflection", e);
+      showError("status report", e);
+    } finally {
+      runningReport = false;
     }
+  }
+
+  function formatWindow(start: string, end: string): string {
+    const s = new Date(start);
+    const e = new Date(end);
+    const sameDay = s.toDateString() === e.toDateString();
+    const sLabel = sameDay
+      ? s.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      : s.toLocaleString();
+    const eLabel = e.toLocaleString();
+    return `${sLabel} → ${eLabel}`;
   }
 
   async function refreshInbox() {
@@ -371,7 +392,9 @@
         </p>
         <div class="actions">
           <button onclick={refreshInbox}>Refresh inbox</button>
-          <button onclick={runReflection}>Run daily reflection</button>
+          <button onclick={runReportNow} disabled={runningReport}>
+            {runningReport ? "Writing report…" : "Run status report now"}
+          </button>
         </div>
         {#if inbox.length === 0}
           <p class="hint">Inbox is empty.</p>
@@ -397,12 +420,39 @@
             <p>{approvedSummary.text}</p>
           </div>
         {/if}
-        {#if lastReflection}
-          <h3>Last dream — {lastReflection.reflectionDate}</h3>
-          <ul>
-            <li><b>learned:</b> {lastReflection.learned}</li>
-            <li><b>noticed:</b> {lastReflection.noticed}</li>
-            <li><b>wants:</b> {lastReflection.wants}</li>
+        <h3>Recent status reports</h3>
+        <p class="hint">
+          Mochi writes one of these roughly every 12 hours during an idle
+          window — see PRD §9.8. Files land under your pet home folder's
+          <code>dreams/</code> directory.
+        </p>
+        {#if recentReports.length === 0}
+          <p class="hint">
+            No reports yet. They appear after Mochi has been around for at
+            least 12 hours and finds an idle moment, or you can use the
+            button above to trigger one now.
+          </p>
+        {:else}
+          <ul class="report-list">
+            {#each recentReports as r (r.id)}
+              <li>
+                <div class="row">
+                  <strong>{new Date(r.createdAt).toLocaleString()}</strong>
+                  <small>{formatWindow(r.windowStart, r.windowEnd)}</small>
+                </div>
+                {#if r.prose}
+                  <p class="prose">{r.prose}</p>
+                {/if}
+                <ul class="triple">
+                  {#if r.learned}<li><b>learned:</b> {r.learned}</li>{/if}
+                  {#if r.noticed}<li><b>noticed:</b> {r.noticed}</li>{/if}
+                  {#if r.wants}<li><b>wants:</b> {r.wants}</li>{/if}
+                </ul>
+                {#if r.filePath}
+                  <small class="meta">→ {r.filePath}</small>
+                {/if}
+              </li>
+            {/each}
           </ul>
         {/if}
       </section>
@@ -615,5 +665,44 @@
     margin: 0;
     white-space: pre-wrap;
     word-break: break-word;
+  }
+  .report-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 420px;
+    overflow-y: auto;
+  }
+  .report-list li {
+    background: var(--mochi-cream);
+    border-radius: 10px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .report-list .prose {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: #4a3a4a;
+    white-space: pre-wrap;
+  }
+  .report-list .triple {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 12px;
+    color: #4a3a4a;
+  }
+  .report-list .meta {
+    font-size: 11px;
+    color: #7a6a7a;
   }
 </style>

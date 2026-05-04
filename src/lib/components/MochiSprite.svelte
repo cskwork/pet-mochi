@@ -44,6 +44,15 @@
     yawn: "/sprites/mochi-yawn.png",
     roll: "/sprites/mochi-roll.png",
     blush: "/sprites/mochi-blush.png",
+    // REQ-015 expressive set — single-frame poses driven by §9.11 choreography.
+    stretch: "/sprites/mochi-stretch.png",
+    peek: "/sprites/mochi-peek.png",
+    tilt_head: "/sprites/mochi-tilt-head.png",
+    shake: "/sprites/mochi-shake.png",
+    nuzzle: "/sprites/mochi-nuzzle.png",
+    wiggle: "/sprites/mochi-wiggle.png",
+    dizzy: "/sprites/mochi-dizzy.png",
+    surprise: "/sprites/mochi-surprise.png",
   };
 
   // Subtle CSS tint per mood so the same base PNG reads as a different state

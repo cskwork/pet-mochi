@@ -19,6 +19,9 @@ pub struct PetState {
     pub current_intent: Option<String>,
     pub last_interaction_at: Option<String>,
     pub last_llm_call_at: Option<String>,
+    /// RFC3339 timestamp of the last idle-triggered status report (PRD §9.8).
+    /// Drives the 12-hour cadence gate; null means a report has never run.
+    pub last_report_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -42,6 +45,7 @@ impl PetState {
             current_intent: Some("idle".to_string()),
             last_interaction_at: None,
             last_llm_call_at: None,
+            last_report_at: None,
             created_at: now.clone(),
             updated_at: now,
         }
@@ -104,6 +108,41 @@ pub struct DailyReflection {
     pub wants: Option<String>,
     pub raw_text: Option<String>,
     pub created_at: String,
+}
+
+/// 12-hour idle-triggered status report (PRD §9.8, REQ-070..076).
+/// Replaces the daily-cadence reflection model. `daily_reflections` is kept in
+/// the schema for backwards compatibility with old user databases.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatusReport {
+    pub id: String,
+    /// RFC3339 — start of the analyzed 12h window.
+    pub window_start: String,
+    /// RFC3339 — end of the analyzed window (= report fire time).
+    pub window_end: String,
+    pub learned: Option<String>,
+    pub noticed: Option<String>,
+    pub wants: Option<String>,
+    /// 200-400 character paragraph interpreting the window. Optional because
+    /// the deterministic fallback may produce a shorter line.
+    pub prose: Option<String>,
+    /// Path under `pet_home/dreams/` where the markdown copy lives, or null
+    /// if file write failed (the row is still recorded).
+    pub file_path: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewStatusReport {
+    pub window_start: String,
+    pub window_end: String,
+    pub learned: Option<String>,
+    pub noticed: Option<String>,
+    pub wants: Option<String>,
+    pub prose: Option<String>,
+    pub file_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -16,7 +16,7 @@ export type PetEvent =
   | { type: "FILE_INSPECTION_APPROVED"; path: string }
   | { type: "MEMORY_CREATED"; memoryId: string }
   | { type: "LLM_RESPONSE_READY"; requestId: string; text: string }
-  | { type: "DAILY_REFLECTION_DUE" };
+  | { type: "STATUS_REPORT_DUE" };  // §9.8 idle-triggered, fires every ~12h
 
 export function eventImportance(event: PetEvent): number {
   switch (event.type) {
@@ -38,7 +38,7 @@ export function eventImportance(event: PetEvent): number {
       return 70;
     case "MEMORY_CREATED":
       return 40;
-    case "DAILY_REFLECTION_DUE":
+    case "STATUS_REPORT_DUE":
       return 80;
     case "LLM_RESPONSE_READY":
       return 10;
