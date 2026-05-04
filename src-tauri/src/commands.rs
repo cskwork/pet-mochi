@@ -60,6 +60,13 @@ pub fn save_pet_state(state: State<'_, AppState>, mut pet: PetState) -> AppResul
     Ok(pet)
 }
 
+/// Cleanly terminate the entire app process. Invoked from the pet's right-click
+/// menu — the main window is frameless, so users have no native close button.
+#[tauri::command]
+pub fn quit_app(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
 // ============== Settings (secrets handled separately) ==============
 
 #[tauri::command]

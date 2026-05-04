@@ -16,6 +16,7 @@
     nextNudge,
     rememberNudge,
     newNudgeState,
+    roundStats,
     type ActionKey,
     type AnimationStep,
     type NudgeState,
@@ -73,6 +74,10 @@
   let lastTickAt = $state<number>(Date.now());
   let nudgeState: NudgeState = newNudgeState();
   let saving = $state(false);
+  // Counts consecutive save failures. Only the FIRST failure shows a bubble —
+  // a persistent backend problem shouldn't replay the same warning every 4s
+  // and steal the bubble channel from real pet messages. Reset on success.
+  let saveFailureStreak = 0;
   let viewportSize = $state({ width: 360, height: 360 });
 
   let tickTimer: ReturnType<typeof setInterval> | undefined;
@@ -148,13 +153,26 @@
       if (destroyed) return;
       // Capture the latest snapshot at flush time, NOT at schedule time —
       // otherwise intermediate ticks get overwritten by the backend echo.
-      const snapshot = pet;
+      // Round integer stats: the sim accumulates fractional decay each tick
+      // for smooth aggregation, but the backend's PetState models them as
+      // i32 and serde rejects fractional inputs.
+      const snapshot = roundStats(pet);
       saving = true;
       try {
         await api.savePetState(snapshot);
+        saveFailureStreak = 0;
       } catch (err) {
         console.warn("savePetState failed", err);
-        if (!destroyed) flashBubble("(couldn't save state)", 3_000);
+        saveFailureStreak += 1;
+        // Show the actual reason on the FIRST failure (so the user can act on
+        // it), but stay silent on every subsequent failure in the same streak —
+        // a backend that has been down for minutes will keep failing every 4s
+        // and the repeated bubble buries real pet messages.
+        if (!destroyed && saveFailureStreak === 1) {
+          const msg = (err as Error)?.message ?? String(err);
+          const short = msg.length > 60 ? msg.slice(0, 60) + "…" : msg;
+          flashBubble(`(save failed: ${short})`, 4_000);
+        }
       } finally {
         if (!destroyed) saving = false;
       }
@@ -456,6 +474,41 @@
     await handlePetClick();
   }
 
+  // Right-click context menu: the overlay window is frameless, so users have
+  // no native way to close the app otherwise. Position the menu at the cursor
+  // and clamp into the viewport so it never spills off-screen.
+  let menuOpen = $state(false);
+  let menuPos = $state({ x: 0, y: 0 });
+  const MENU_W = 140;
+  const MENU_H = 40;
+
+  function openContextMenu(e: MouseEvent) {
+    e.preventDefault();
+    const x = Math.min(viewportSize.width - MENU_W - 4, Math.max(4, e.clientX));
+    const y = Math.min(viewportSize.height - MENU_H - 4, Math.max(4, e.clientY));
+    menuPos = { x, y };
+    menuOpen = true;
+  }
+
+  function closeContextMenu() {
+    menuOpen = false;
+  }
+
+  async function quitApp() {
+    closeContextMenu();
+    if (!api.hasBackend) return;
+    try {
+      await api.quitApp();
+    } catch (err) {
+      console.warn("quit_app failed", err);
+      flashBubble("(couldn't quit)", 3_000);
+    }
+  }
+
+  function onMenuKey(e: KeyboardEvent) {
+    if (e.key === "Escape") closeContextMenu();
+  }
+
   // Place the bubble so it never falls behind the status pill or the actions
   // panel. Default: above the pet. Flip below if above would clip the
   // viewport top OR overlap the status strip. If "below" would overlap the
@@ -607,6 +660,10 @@
   }
 
   function isInsideInteractive(x: number, y: number): boolean {
+    // While the context menu is open it covers the entire stage with a
+    // dismiss scrim — every cursor position is interactive (clicking
+    // anywhere closes the menu, clicking the menu item triggers it).
+    if (menuOpen) return true;
     if (
       x >= position.x - HIT_PAD &&
       x <= position.x + petSize + HIT_PAD &&
@@ -782,6 +839,7 @@
     onpointerup={onPetPointerUp}
     onpointercancel={onPetPointerUp}
     onclick={onPetClick}
+    oncontextmenu={openContextMenu}
     aria-label="Mochi"
   >
     <MochiSprite
@@ -826,6 +884,27 @@
   <div class="actions-anchor">
     <PetActions onAction={onAction} onReport={onReport} busy={busyAction} reporting={reporting} />
   </div>
+
+  {#if menuOpen}
+    <button
+      type="button"
+      class="menu-scrim"
+      aria-label="Close menu"
+      onclick={closeContextMenu}
+      oncontextmenu={(e) => { e.preventDefault(); closeContextMenu(); }}
+    ></button>
+    <div
+      class="context-menu"
+      role="menu"
+      style="left: {menuPos.x}px; top: {menuPos.y}px; width: {MENU_W}px;"
+      tabindex="-1"
+      onkeydown={onMenuKey}
+    >
+      <button type="button" role="menuitem" class="menu-item" onclick={quitApp}>
+        Close Mochi
+      </button>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -866,5 +945,40 @@
     right: 8px;
     bottom: 8px;
     pointer-events: auto;
+  }
+  .menu-scrim {
+    position: absolute;
+    inset: 0;
+    background: transparent;
+    border: 0;
+    padding: 0;
+    pointer-events: auto;
+    cursor: default;
+    z-index: 9;
+  }
+  .context-menu {
+    position: absolute;
+    background: rgba(255, 255, 255, 0.98);
+    border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+    padding: 4px;
+    pointer-events: auto;
+    z-index: 10;
+  }
+  .menu-item {
+    width: 100%;
+    border: 0;
+    background: transparent;
+    color: var(--mochi-text, #3a2b34);
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .menu-item:hover,
+  .menu-item:focus {
+    background: rgba(255, 218, 232, 0.95);
+    outline: none;
   }
 </style>
