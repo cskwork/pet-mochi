@@ -17,10 +17,16 @@
     rememberNudge,
     newNudgeState,
     roundStats,
+    shouldCallLLM,
+    pickFallbackPreset,
+    stepsForPick,
+    validateChoreographyPayload,
     type ActionKey,
     type AnimationStep,
+    type ChoreographyPick,
     type NudgeState,
     type Obstacle,
+    type PetEvent,
     type PetState,
     type RuntimeContext,
   } from "../sim";
@@ -89,6 +95,11 @@
   let unlistenInbox: (() => void) | null = null;
   let unsubscribeBus: (() => void) | null = null;
   let lastAutonomousFor: LastAutonomous = null;
+  // Tracks the most recent choreography pick for re-entry suppression. Shares
+  // the same `autonomousInFlight` flag as chat — REQ-097 says both compete
+  // for the same 90s LLM cooldown, so concurrent re-entry must be blocked
+  // across both paths.
+  let lastChoreography: LastAutonomous = null;
   // Blocks a second invocation while one is mid-flight, in addition to the
   // (kind, ts) cooldown window. See autonomousGate.ts for rationale.
   let autonomousInFlight = false;
@@ -104,6 +115,10 @@
   const TICK_MS = 3_000;
   const SAVE_DEBOUNCE_MS = 4_000;
   const AUTONOMOUS_LOCAL_COOLDOWN_MS = 5 * 60_000;
+  // Local cooldown for choreography. Shorter than chat because the action
+  // is silent/lightweight; the backend still enforces the canonical 90s
+  // shared LLM cooldown (REQ-097).
+  const CHOREO_LOCAL_COOLDOWN_MS = 30_000;
   const HIT_TEST_MS = 80;
   const HIT_PAD = 8;
   const DRAG_THRESHOLD = 6;
@@ -289,6 +304,53 @@
     // unapproved, which is the safe default per REQ-084.
     if (inboxQueue.length === 0) return;
     inboxQueue = inboxQueue.slice(1);
+  }
+
+  /**
+   * §9.11 / REQ-094..099 — react to a salient event by playing a closed-catalog
+   * choreography. Tries the LLM first; on any failure (no provider, cooldown,
+   * malformed JSON, network error) falls back to a deterministic preset so the
+   * pet ALWAYS reacts visibly (REQ-098). Bubble tokens are restricted to the
+   * closed vocabulary (REQ-096) — no human sentences.
+   */
+  async function maybeChoreography(event: PetEvent) {
+    // Chat path owns USER_SENT_MESSAGE and USER_RETURNED — don't double-fire.
+    if (event.type === "USER_SENT_MESSAGE") return;
+    if (event.type === "USER_RETURNED") return;
+
+    const decision = tryEnterAutonomous({
+      inFlight: autonomousInFlight,
+      last: lastChoreography,
+      kind: "choreo",
+      now: Date.now(),
+      cooldownMs: CHOREO_LOCAL_COOLDOWN_MS,
+    });
+    if (!decision.proceed) return;
+    lastChoreography = decision.nextLast;
+    autonomousInFlight = true;
+
+    let pick: ChoreographyPick;
+    try {
+      const reply = await api.chooseChoreography(event.type);
+      const validated = validateChoreographyPayload(reply);
+      pick = validated ?? pickFallbackPreset(pet, event);
+    } catch {
+      // Network error, missing provider, cooldown rejection — fall back
+      // deterministically. The pet must still react (REQ-098).
+      pick = pickFallbackPreset(pet, event);
+    } finally {
+      autonomousInFlight = false;
+    }
+
+    const steps = stepsForPick(pick);
+    playSteps(steps);
+    if (pick.bubble) {
+      // Closed-vocabulary bubble (REQ-096). The same ChatBubble component
+      // renders it as text — but the validator already proved this is one
+      // of the allowed glyph/onomatopoeia tokens, so no free-text path is
+      // ever exercised here.
+      flashBubble(pick.bubble, 1_800);
+    }
   }
 
   async function maybeAutonomousSpeak(kind: string, awayMinutes: number) {
@@ -782,10 +844,18 @@
 
     // Subscribe to the in-process bus so high-salience autonomous events
     // actually trigger a response (otherwise the salience gate is dead code).
-    unsubscribeBus = eventBus.subscribe((event) => {
+    unsubscribeBus = eventBus.subscribe((event, state) => {
       if (!api.hasBackend) return;
+      // Long absences keep the existing chat path (text reply, mood-aware).
       if (event.type === "USER_RETURNED" && event.awayMinutes >= 30) {
         void maybeAutonomousSpeak("returned", event.awayMinutes);
+        return;
+      }
+      // §9.11 behavior choreography for other high-salience events.
+      // shouldCallLLM also consumes the shared 90s autonomous LLM cooldown,
+      // so chat and choreography compete for the same LLM budget (REQ-097).
+      if (shouldCallLLM(event, state)) {
+        void maybeChoreography(event);
       }
     });
 

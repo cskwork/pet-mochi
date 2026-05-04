@@ -74,6 +74,20 @@ export type DailyReflection = {
   createdAt: string;
 };
 
+/** §9.8 idle-triggered status report (REQ-070..076). Replaces DailyReflection
+ *  semantically; the daily_reflections table is kept for backward compat. */
+export type StatusReport = {
+  id: string;
+  windowStart: string;
+  windowEnd: string;
+  learned?: string | null;
+  noticed?: string | null;
+  wants?: string | null;
+  prose?: string | null;
+  filePath?: string | null;
+  createdAt: string;
+};
+
 export type SkillManifest = {
   id: string;
   name: string;
@@ -114,6 +128,18 @@ export const api = {
 
   runDailyReflection: () => invoke<DailyReflection>("run_daily_reflection"),
   getLastReflection: () => invoke<DailyReflection | null>("get_last_reflection"),
+  runStatusReport: () => invoke<StatusReport>("run_status_report"),
+  listStatusReports: (limit = 10) =>
+    invoke<StatusReport[]>("list_status_reports", { limit }),
+
+  /** §9.11 / REQ-094..099 — pick a behavior choreography for a salient event.
+   *  Backend rejects unknown presets and free-text bubbles; on Err the
+   *  frontend MUST run `pickFallbackPreset` instead (REQ-098). */
+  chooseChoreography: (eventType: string) =>
+    invoke<{ preset: string; variant: number; bubble?: string | null }>(
+      "choose_choreography",
+      { eventType },
+    ),
   generateInteractionReport: () =>
     invoke<InteractionReport>("generate_interaction_report"),
 

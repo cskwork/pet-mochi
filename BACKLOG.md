@@ -139,6 +139,37 @@ if (wake) {
 
 ---
 
+## MEDIUM #21 — Playwright e2e for §9.8 status report and §9.11 choreography
+
+**Files (would create)**
+- `tests/e2e/status-report.spec.ts` — boot app with mocked clock 12h+1m past
+  `lastReportAt`, send IDLE_TICK for 60s, assert a file appears under
+  `pet_home/dreams/` and the "Recent status reports" list populates.
+- `tests/e2e/choreography.spec.ts` — fire `USER_RETURNED` after 35-min absence,
+  assert sprite cycles through ≥2 distinct `MovementState` frames within 3s
+  and the bubble shows a closed-vocabulary token.
+- `playwright.config.ts` (new), `package.json` (`@playwright/test` devDep).
+
+**Why deferred**
+Tauri webview e2e cannot be driven by stock Playwright — it needs
+`tauri-driver` + `webdriverio`, and the dev-server preview path doesn't
+exercise the `#[tauri::command]` boundary that holds most of the new logic
+(REQ-070..076 + REQ-094..099). The simulation engine is already 100%
+covered by vitest (128 tests), and `cargo test --lib` covers the Rust
+side (75 tests). End-to-end value here is mostly the integration glue,
+which is small.
+
+**Suggested approach when picked up**
+1. Add `tauri-driver` (Rust binary) + `webdriverio` (Node) instead of
+   raw Playwright.
+2. Or, alternatively, add `@testing-library/svelte` integration tests
+   that mock `api.invoke` — covers ~80% of the gap at ~10% of the cost.
+3. The pure logic is already gated by `statusReportGate.test.ts` and
+   `choreography.test.ts`, so the e2e job is to verify wiring, not
+   correctness.
+
+---
+
 ## References
 
 - Codex review output (gitignored): `codex-uiux-out.txt`
