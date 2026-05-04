@@ -107,7 +107,7 @@ export function applyAction(
       return finishedAction(next, `${state.name}: *yawn* …zzz 💤`, def, steps);
     }
     case "pet": {
-      const steps = petSteps();
+      const steps = petSteps(state.currentAnimation);
       const next: PetState = {
         ...state,
         affection: clamp(state.affection + 1),
@@ -208,12 +208,18 @@ function restSteps(): AnimationStep[] {
 }
 
 // Pat: a brief blush moment then back to a happy celebrate so the pet's
-// reaction reads even when stats are otherwise neutral.
-function petSteps(): AnimationStep[] {
-  return [
+// reaction reads even when stats are otherwise neutral. When the pet is
+// asleep, a quick yawn precedes the blush so the wake-up reads naturally
+// instead of snapping straight to a celebrate pose.
+function petSteps(prior: MovementState): AnimationStep[] {
+  const base: AnimationStep[] = [
     { animation: "blush",     durationMs: 520 },
     { animation: "celebrate", durationMs: 500 },
   ];
+  if (prior === "sleep") {
+    return [{ animation: "yawn", durationMs: 420 }, ...base];
+  }
+  return base;
 }
 
 /**
