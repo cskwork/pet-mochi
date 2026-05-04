@@ -104,8 +104,16 @@ core experience.
 
 ### Coming next (roadmap)
 
-Voice · Custom skins · Live2D / VRM · Git/test-runner watcher · Local
-embedding memory search · Multiple pets. See [`PRD.md`](./PRD.md) §24.
+- **Behavior choreography (§9.11, REQ-094…099)** — LLM expresses emotion through
+  named animation presets, never free text. Closed-vocabulary bubbles only.
+- **12h idle-triggered status report (§9.8, REQ-070…076)** — replaces the
+  fixed daily cadence. Fires only when the host is idle and ≥12h has elapsed;
+  missed windows are dropped (no catch-up).
+- **Expressive sprite set (REQ-015)** — `stretch` · `peek` · `tilt_head` ·
+  `shake` · `nuzzle` · `wiggle` · `dizzy` · `surprise`.
+
+Further out: Voice · Custom skins · Live2D / VRM · Git/test-runner watcher ·
+Local embedding memory search · Multiple pets. See [`PRD.md`](./PRD.md) §24.
 
 ---
 
@@ -226,8 +234,9 @@ improvements, and [`BACKLOG.md`](./BACKLOG.md) for deferred items.
 
 ## PRD coverage
 
-Every numbered requirement (REQ-001 … REQ-093) from [`PRD.md`](./PRD.md) is
-implemented or explicitly out-of-scope for the MVP. Highlights:
+Every numbered requirement (REQ-001 … REQ-099) from [`PRD.md`](./PRD.md) is
+either implemented, in active development (REQ-015, REQ-070…076, REQ-094…099),
+or explicitly out-of-scope for the MVP. Highlights:
 
 - ✅ Transparent always-on-top draggable overlay (REQ-001…005)
 - ✅ Idle / walk / sleep / jump / sit / look_cursor / celebrate / hide / run animations (REQ-010)

@@ -15,6 +15,7 @@ export type Intent =
   | "celebrate";
 
 export type MovementState =
+  // core (REQ-010)
   | "idle"
   | "walk"
   | "run"
@@ -24,11 +25,21 @@ export type MovementState =
   | "look_cursor"
   | "hide"
   | "celebrate"
+  // existing extended set (shipped before REQ-015)
   | "eat"
   | "eat_2"
   | "yawn"
   | "roll"
-  | "blush";
+  | "blush"
+  // REQ-015 expressive set — adds vocabulary for behavior choreography (§9.11)
+  | "stretch"
+  | "peek"
+  | "tilt_head"
+  | "shake"
+  | "nuzzle"
+  | "wiggle"
+  | "dizzy"
+  | "surprise";
 
 export type PetState = {
   id: string;
@@ -46,6 +57,9 @@ export type PetState = {
   currentIntent: Intent;
   lastInteractionAt: string | null;
   lastLLMCallAt: string | null;
+  /** RFC3339 timestamp of the last idle-triggered status report (PRD §9.8).
+   *  Drives the 12-hour cadence gate; null until the first report runs. */
+  lastReportAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -132,6 +146,7 @@ export function newPetState(name = "Mochi"): PetState {
     currentIntent: "idle",
     lastInteractionAt: null,
     lastLLMCallAt: null,
+    lastReportAt: null,
     createdAt: now,
     updatedAt: now,
   };

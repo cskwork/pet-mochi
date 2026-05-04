@@ -1,7 +1,7 @@
 use crate::error::{AppError, AppResult};
 use crate::models::{
     now_rfc3339, parse_timestamp, DailyReflection, EventLogEntry, Interaction, Memory,
-    NewInteraction, NewMemory, PetState, Skill,
+    NewInteraction, NewMemory, NewStatusReport, PetState, Skill, StatusReport,
 };
 use chrono::Utc;
 use parking_lot::Mutex;
@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS pet_state (
     current_intent TEXT,
     last_interaction_at TEXT,
     last_llm_call_at TEXT,
+    last_report_at TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -88,6 +89,23 @@ CREATE TABLE IF NOT EXISTS daily_reflections (
     UNIQUE(reflection_date)
 );
 
+-- 12-hour idle-triggered status reports (PRD §9.8, REQ-070..076).
+-- Replaces the daily-cadence model; daily_reflections kept above for
+-- backwards compatibility with existing user databases.
+CREATE TABLE IF NOT EXISTS status_reports (
+    id TEXT PRIMARY KEY,
+    window_start TEXT NOT NULL,
+    window_end TEXT NOT NULL,
+    learned TEXT,
+    noticed TEXT,
+    wants TEXT,
+    prose TEXT,
+    file_path TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_status_reports_created_at ON status_reports(created_at DESC);
+
 CREATE TABLE IF NOT EXISTS skills (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -127,6 +145,7 @@ impl Db {
         let conn = Connection::open(path)?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON;")?;
         conn.execute_batch(SCHEMA_SQL)?;
+        ensure_pet_state_has_last_report_at(&conn)?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
@@ -135,6 +154,7 @@ impl Db {
     pub fn open_in_memory() -> AppResult<Self> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch(SCHEMA_SQL)?;
+        ensure_pet_state_has_last_report_at(&conn)?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
@@ -158,8 +178,8 @@ impl Db {
     pub fn save_pet_state(&self, state: &PetState) -> AppResult<()> {
         let conn = self.conn.lock();
         conn.execute(
-            "INSERT INTO pet_state (id, name, mood, hunger, energy, affection, boredom, curiosity, stress, trust, relationship_level, current_animation, current_intent, last_interaction_at, last_llm_call_at, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+            "INSERT INTO pet_state (id, name, mood, hunger, energy, affection, boredom, curiosity, stress, trust, relationship_level, current_animation, current_intent, last_interaction_at, last_llm_call_at, last_report_at, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
              ON CONFLICT(id) DO UPDATE SET
                 name=excluded.name,
                 mood=excluded.mood,
@@ -175,6 +195,7 @@ impl Db {
                 current_intent=excluded.current_intent,
                 last_interaction_at=excluded.last_interaction_at,
                 last_llm_call_at=excluded.last_llm_call_at,
+                last_report_at=excluded.last_report_at,
                 updated_at=excluded.updated_at",
             params![
                 state.id,
@@ -192,6 +213,7 @@ impl Db {
                 state.current_intent,
                 state.last_interaction_at,
                 state.last_llm_call_at,
+                state.last_report_at,
                 state.created_at,
                 state.updated_at,
             ],
@@ -203,7 +225,7 @@ impl Db {
         let conn = self.conn.lock();
         let res = conn
             .query_row(
-                "SELECT id, name, mood, hunger, energy, affection, boredom, curiosity, stress, trust, relationship_level, current_animation, current_intent, last_interaction_at, last_llm_call_at, created_at, updated_at
+                "SELECT id, name, mood, hunger, energy, affection, boredom, curiosity, stress, trust, relationship_level, current_animation, current_intent, last_interaction_at, last_llm_call_at, last_report_at, created_at, updated_at
                  FROM pet_state WHERE id = ?1",
                 params![id],
                 |row| {
@@ -223,8 +245,9 @@ impl Db {
                         current_intent: row.get(12)?,
                         last_interaction_at: row.get(13)?,
                         last_llm_call_at: row.get(14)?,
-                        created_at: row.get(15)?,
-                        updated_at: row.get(16)?,
+                        last_report_at: row.get(15)?,
+                        created_at: row.get(16)?,
+                        updated_at: row.get(17)?,
                     })
                 },
             )
@@ -372,6 +395,30 @@ impl Db {
         Ok(collect_tolerant(iter, "interactions"))
     }
 
+    /// Event log entries whose `created_at` is in the [start, end] range.
+    /// Used by §9.8 status report aggregation; `limit` should be generous since
+    /// 12h of events is typically small (< 200 entries on a typical day).
+    pub fn events_between(&self, start: &str, end: &str, limit: i64) -> AppResult<Vec<EventLogEntry>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, event_type, payload_json, salience, handled, created_at
+             FROM event_log
+             WHERE created_at >= ?1 AND created_at <= ?2
+             ORDER BY created_at DESC LIMIT ?3",
+        )?;
+        let iter = stmt.query_map(params![start, end, limit], |row| {
+            Ok(EventLogEntry {
+                id: row.get(0)?,
+                event_type: row.get(1)?,
+                payload_json: row.get(2)?,
+                salience: row.get(3)?,
+                handled: row.get::<_, i64>(4)? != 0,
+                created_at: row.get(5)?,
+            })
+        })?;
+        Ok(collect_tolerant(iter, "event_log"))
+    }
+
     /// Interactions whose `created_at` is between `start` and `end` (inclusive).
     /// Both bounds are RFC3339 strings; sortable as text since RFC3339 with the
     /// same timezone is lexicographically ordered.
@@ -421,6 +468,62 @@ impl Db {
                         created_at: row.get(6)?,
                     })
                 },
+            )
+            .optional()?;
+        Ok(r)
+    }
+
+    // ------- Status reports (idle-triggered, PRD §9.8) -------
+    pub fn save_status_report(&self, r: NewStatusReport) -> AppResult<StatusReport> {
+        let id = Uuid::new_v4().to_string();
+        let now = now_rfc3339();
+        let conn = self.conn.lock();
+        conn.execute(
+            "INSERT INTO status_reports (id, window_start, window_end, learned, noticed, wants, prose, file_path, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                id,
+                r.window_start,
+                r.window_end,
+                r.learned,
+                r.noticed,
+                r.wants,
+                r.prose,
+                r.file_path,
+                now,
+            ],
+        )?;
+        Ok(StatusReport {
+            id,
+            window_start: r.window_start,
+            window_end: r.window_end,
+            learned: r.learned,
+            noticed: r.noticed,
+            wants: r.wants,
+            prose: r.prose,
+            file_path: r.file_path,
+            created_at: now,
+        })
+    }
+
+    pub fn list_status_reports(&self, limit: i64) -> AppResult<Vec<StatusReport>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, window_start, window_end, learned, noticed, wants, prose, file_path, created_at
+             FROM status_reports ORDER BY created_at DESC LIMIT ?1",
+        )?;
+        let iter = stmt.query_map(params![limit], map_status_report)?;
+        Ok(collect_tolerant(iter, "status_reports"))
+    }
+
+    pub fn last_status_report(&self) -> AppResult<Option<StatusReport>> {
+        let conn = self.conn.lock();
+        let r = conn
+            .query_row(
+                "SELECT id, window_start, window_end, learned, noticed, wants, prose, file_path, created_at
+                 FROM status_reports ORDER BY created_at DESC LIMIT 1",
+                [],
+                map_status_report,
             )
             .optional()?;
         Ok(r)
@@ -568,6 +671,46 @@ fn map_interaction(row: &rusqlite::Row<'_>) -> rusqlite::Result<Interaction> {
         state_snapshot_json: row.get(5)?,
         created_at: row.get(6)?,
     })
+}
+
+fn map_status_report(row: &rusqlite::Row<'_>) -> rusqlite::Result<StatusReport> {
+    Ok(StatusReport {
+        id: row.get(0)?,
+        window_start: row.get(1)?,
+        window_end: row.get(2)?,
+        learned: row.get(3)?,
+        noticed: row.get(4)?,
+        wants: row.get(5)?,
+        prose: row.get(6)?,
+        file_path: row.get(7)?,
+        created_at: row.get(8)?,
+    })
+}
+
+/// Idempotent migration: add `last_report_at` to `pet_state` if a pre-§9.8
+/// database is being opened. The column is included in `SCHEMA_SQL` for fresh
+/// databases, but `CREATE TABLE IF NOT EXISTS` is a no-op on existing tables,
+/// so we must inspect the live schema to decide whether to ALTER.
+///
+/// Errors here are NON-fatal — if the migration fails, downstream queries that
+/// reference the column will fail with a clear error and surface the issue.
+/// PRD §10.2: a failed migration must not crash app startup.
+fn ensure_pet_state_has_last_report_at(conn: &Connection) -> AppResult<()> {
+    let mut stmt = conn.prepare("PRAGMA table_info(pet_state)")?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        // table_info columns: cid, name, type, notnull, dflt_value, pk
+        let name: String = row.get(1)?;
+        if name == "last_report_at" {
+            return Ok(());
+        }
+    }
+    drop(rows);
+    drop(stmt);
+    if let Err(e) = conn.execute("ALTER TABLE pet_state ADD COLUMN last_report_at TEXT", []) {
+        log::warn!("could not add last_report_at column (may already exist): {e}");
+    }
+    Ok(())
 }
 
 fn map_memory(row: &rusqlite::Row<'_>) -> rusqlite::Result<Memory> {
@@ -883,6 +1026,139 @@ mod tests {
         let rows = db.recent_events(10).expect("loader must not error");
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].event_type, "APP_STARTED");
+    }
+
+    // ----- §9.8 idle-triggered status report -----
+
+    /// Schema as it existed before REQ-070..076 added `last_report_at`. Used to
+    /// build a "legacy" SQLite file for the migration test below.
+    const PRE_REPORT_PET_STATE_SQL: &str = r#"
+        CREATE TABLE IF NOT EXISTS pet_state (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            mood TEXT NOT NULL,
+            hunger INTEGER NOT NULL,
+            energy INTEGER NOT NULL,
+            affection INTEGER NOT NULL,
+            boredom INTEGER NOT NULL,
+            curiosity INTEGER NOT NULL,
+            stress INTEGER NOT NULL,
+            trust INTEGER NOT NULL,
+            relationship_level INTEGER NOT NULL,
+            current_animation TEXT,
+            current_intent TEXT,
+            last_interaction_at TEXT,
+            last_llm_call_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+    "#;
+
+    /// REQ-070..076 migration: opening a database that was created by a
+    /// pre-§9.8 build must add the `last_report_at` column non-destructively
+    /// and the existing row must survive byte-for-byte.
+    #[test]
+    fn migration_adds_last_report_at_to_legacy_db() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("legacy.sqlite");
+
+        // Stand up a "legacy" file with the old 17-column schema and one row.
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch(PRE_REPORT_PET_STATE_SQL).unwrap();
+            conn.execute(
+                "INSERT INTO pet_state (id, name, mood, hunger, energy, affection, boredom, curiosity, stress, trust, relationship_level, current_animation, current_intent, last_interaction_at, last_llm_call_at, created_at, updated_at)
+                 VALUES ('default', 'LegacyMochi', 'happy', 30, 80, 50, 20, 60, 10, 50, 1, 'idle', 'idle', NULL, NULL, '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
+                [],
+            ).unwrap();
+        }
+
+        // The current opener must run the migration silently.
+        let db = Db::open(&db_path).expect("legacy DB should migrate cleanly");
+
+        let mut state = db
+            .load_pet_state("default")
+            .unwrap()
+            .expect("legacy row must survive migration");
+        assert_eq!(state.name, "LegacyMochi");
+        assert!(
+            state.last_report_at.is_none(),
+            "newly added column must default to NULL on legacy rows"
+        );
+
+        // And the column must accept a value going forward.
+        state.last_report_at = Some("2026-05-04T00:00:00Z".to_string());
+        db.save_pet_state(&state).unwrap();
+        let reloaded = db.load_pet_state("default").unwrap().unwrap();
+        assert_eq!(
+            reloaded.last_report_at.as_deref(),
+            Some("2026-05-04T00:00:00Z")
+        );
+    }
+
+    /// Idempotency: re-opening an already-migrated DB must be a no-op (no
+    /// duplicate-column error from sqlite, no panic from the migration helper).
+    #[test]
+    fn migration_is_idempotent_on_already_migrated_db() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("modern.sqlite");
+        let _ = Db::open(&db_path).unwrap();
+        let _ = Db::open(&db_path).expect("second open must not error");
+        let _ = Db::open(&db_path).expect("third open must not error");
+    }
+
+    /// REQ-115 (frontend gate dependency): `last_report_at` must round-trip
+    /// across a process restart so the 12h cadence resumes correctly.
+    #[test]
+    fn last_report_at_persists_across_restart() {
+        use chrono::Duration;
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("mochi.sqlite");
+
+        let saved_at = (Utc::now() - Duration::hours(13)).to_rfc3339();
+        {
+            let db = Db::open(&db_path).unwrap();
+            let mut state = PetState::new("Mochi");
+            state.id = "default".to_string();
+            state.last_report_at = Some(saved_at.clone());
+            db.save_pet_state(&state).unwrap();
+        }
+        let db = Db::open(&db_path).unwrap();
+        let loaded = db.load_pet_state("default").unwrap().unwrap();
+        assert_eq!(loaded.last_report_at.as_deref(), Some(saved_at.as_str()));
+    }
+
+    /// Save → list → last_status_report round-trip on the new table.
+    #[test]
+    fn status_report_round_trip() {
+        let db = fresh();
+        let r = db
+            .save_status_report(NewStatusReport {
+                window_start: "2026-05-03T12:00:00Z".to_string(),
+                window_end: "2026-05-04T00:00:00Z".to_string(),
+                learned: Some("the user prefers tea".to_string()),
+                noticed: Some("they yawned around 11pm".to_string()),
+                wants: Some("offer a quiet greeting tomorrow".to_string()),
+                prose: Some(
+                    "Twelve hours of mostly quiet, with three little play bursts and a cozy late-evening pat. The user seemed calm. Mochi watched the cursor wander and napped twice — sweet, ordinary time."
+                        .to_string(),
+                ),
+                file_path: Some("dreams/2026-05-04-0000.md".to_string()),
+            })
+            .unwrap();
+
+        assert!(!r.id.is_empty());
+
+        let listed = db.list_status_reports(10).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].learned.as_deref(), Some("the user prefers tea"));
+        assert_eq!(
+            listed[0].window_start.as_str(),
+            "2026-05-03T12:00:00Z"
+        );
+
+        let last = db.last_status_report().unwrap().expect("must have a row");
+        assert_eq!(last.id, r.id);
     }
 
     /// Skills loader: NULL `enabled` column where the loader expects an `i64`.

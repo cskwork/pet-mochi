@@ -232,15 +232,16 @@ When the user drops a `.txt`, `.md`, or `.json` file into the pet inbox:
 4. It can summarize the file or save a note.
 5. It stores the event in memory.
 
-### 7.7 Daily Reflection
+### 7.7 Idle-Triggered Status Report
 
-Once per day, or on app shutdown, the pet creates a short “dream” summary:
+Roughly every 12 hours, during an idle window (pet is in `idle` or `sleep`, no active action sequence), Mochi compiles a short status report covering the previous 12-hour window:
 
 - one thing it learned
 - one thing it noticed about the user
-- one thing it wants to do next
+- one small intention for next time
+- a short prose paragraph (200–400 chars) over summary statistics
 
-This is saved locally in the pet home folder.
+The cadence is *not* a fixed clock — if the computer was off, the next idle window produces a single report; missed windows are dropped (no catch-up). Reports are saved in the pet home folder (`dreams/`) and surfaced in Settings → Recent Reports. The pet stays silent on generation.
 
 ---
 
@@ -314,7 +315,8 @@ This is saved locally in the pet home folder.
 **REQ-011:** The movement engine must be deterministic with small randomness.  
 **REQ-012:** The pet must choose movement locally based on state and context.  
 **REQ-013:** Movement selection must not require LLM calls.  
-**REQ-014:** Animation FPS must be configurable.
+**REQ-014:** Animation FPS must be configurable.  
+**REQ-015:** Beyond the core states above, the pet must support an expressive sprite library: `stretch`, `peek`, `tilt_head`, `shake`, `nuzzle`, `wiggle`, `dizzy`, `surprise` — each a single hand-drawn pose consistent with the existing tone (line weight, palette, sprite size). These extend the pose vocabulary used by behavior choreography (§9.11).
 
 ### 9.3 Simulation Engine
 
@@ -357,12 +359,15 @@ This is saved locally in the pet home folder.
 **REQ-065:** Memory retrieval must use SQLite FTS5 or equivalent local search for MVP.  
 **REQ-066:** Memory retrieval must consider recency, importance, and text relevance.
 
-### 9.8 Daily Reflection
+### 9.8 Idle-Triggered Status Report
 
-**REQ-070:** The app must generate a daily reflection if there were meaningful interactions.  
-**REQ-071:** Reflections must be saved in `pet_home/dreams/`.  
-**REQ-072:** Reflections must be short and structured.  
-**REQ-073:** Daily reflection must not run continuously in the background.
+**REQ-070:** The app must generate a status report when at least 12 hours have elapsed since `lastReportAt` AND the simulation has been in an idle window (`idle`/`sleep` movement, no in-flight action) for at least 60 seconds.  
+**REQ-071:** Reports must be saved in `pet_home/dreams/` as `YYYY-MM-DD-HHMM.md`.  
+**REQ-072:** Reports must be short and structured: a `{learned, noticed, wants}` triple plus a 200–400 character prose paragraph interpreting the 12h window.  
+**REQ-073:** Report generation must not run continuously in the background — only fire when (12h elapsed) AND (idle window) are both true.  
+**REQ-074:** Catch-up reports for missed windows must NOT be generated; if the host was offline for 30 hours, the next idle window produces exactly one report and the older windows are dropped.  
+**REQ-075:** Report input must be a *summary statistics* payload over the 12h window — event-type counts, salience sum, mood distribution, interaction frequency, and top-3 retrieved memories. Raw event payloads must not be sent to the LLM.  
+**REQ-076:** When the LLM is unavailable or returns malformed JSON, a deterministic template fed by the same summary statistics must produce the report so cadence is preserved.
 
 ### 9.9 Pet Home Folder
 
@@ -378,6 +383,17 @@ This is saved locally in the pet home folder.
 **REQ-091:** Skills must declare required permissions.  
 **REQ-092:** MVP skills must be limited to safe built-ins.  
 **REQ-093:** The app must not install remote skills in MVP.
+
+### 9.11 Behavior Choreography (Animation Sequencing)
+
+This section codifies "behavior-as-speech" — the LLM, when consulted, expresses emotion through animation choreography rather than text.
+
+**REQ-094:** When the LLM is consulted at a high-salience event, it must return a *named choreography preset key* plus a small variant index — never compose `MovementState` sequences directly or freeform.  
+**REQ-095:** Choreography presets must be a closed catalog defined at build time. Each preset is an ordered `AnimationStep[]` over the `MovementState` enum (core + REQ-015 expressive set).  
+**REQ-096:** The chat bubble accompanying a choreography may use only a closed token vocabulary — glyphs (`…`, `?`, `♡`, `!`) and short pet-language tokens (`nyu`, `boop`, `mhmm`, etc.). Free-form human sentences are forbidden in this mode.  
+**REQ-097:** Choreography invocation must respect the existing 90-second autonomous LLM cooldown (REQ-033) and the salience ≥ 70 gate.  
+**REQ-098:** When the LLM is unavailable, slow, or returns an unknown preset key, the system must fall back to a deterministic preset selected from local state. The pet must still react visibly.  
+**REQ-099:** Output validation must reject any LLM payload that does not parse to `{ preset: string, variant: number, bubble?: ClosedToken }`. A non-conforming reply triggers the deterministic fallback (REQ-098).
 
 ---
 
@@ -514,6 +530,7 @@ type PetState = {
   currentIntent: "idle" | "explore" | "sleep" | "talk" | "observe" | "celebrate";
   lastInteractionAt: string | null;
   lastLLMCallAt: string | null;
+  lastReportAt: string | null;        // §9.8 idle-triggered status report
   createdAt: string;
   updatedAt: string;
 };
@@ -538,6 +555,7 @@ CREATE TABLE pet_state (
   current_intent TEXT,
   last_interaction_at TEXT,
   last_llm_call_at TEXT,
+  last_report_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -617,7 +635,7 @@ type PetEvent =
   | { type: "FILE_INSPECTION_APPROVED"; path: string }
   | { type: "MEMORY_CREATED"; memoryId: string }
   | { type: "LLM_RESPONSE_READY"; requestId: string; text: string }
-  | { type: "DAILY_REFLECTION_DUE" };
+  | { type: "STATUS_REPORT_DUE" };  // fires when 12h elapsed AND idle window (§9.8)
 ```
 
 ### 14.1 Event Salience
@@ -656,6 +674,7 @@ Low-salience examples:
 
 ```ts
 type MovementState =
+  // core (REQ-010)
   | "idle"
   | "walk"
   | "run"
@@ -664,7 +683,22 @@ type MovementState =
   | "sit"
   | "look_cursor"
   | "hide"
-  | "celebrate";
+  | "celebrate"
+  // existing extended set (shipped before REQ-015)
+  | "eat"
+  | "eat_2"
+  | "yawn"
+  | "roll"
+  | "blush"
+  // expressive set (REQ-015) — new
+  | "stretch"
+  | "peek"
+  | "tilt_head"
+  | "shake"
+  | "nuzzle"
+  | "wiggle"
+  | "dizzy"
+  | "surprise";
 ```
 
 ### 15.2 Movement Selection
@@ -750,24 +784,47 @@ Interaction:
 {{interaction}}
 ```
 
-### 16.3 Daily Reflection
+### 16.3 Status Report (Idle-Triggered, §9.8)
+
+Input is *summary statistics* over the last 12-hour window — never raw events.
 
 ```txt
-You are summarizing one day of experience for a digital pet.
-Write short, concrete, non-dramatic reflections.
+You are summarizing the last 12 hours of experience for a digital pet.
+Write short, concrete, non-dramatic reflections. No system-prompt mentions.
+Stay in character as the pet observing itself and the user.
 
 Return JSON only:
 {
   "learned": "one thing the pet learned",
   "noticed": "one pattern the pet noticed",
-  "wants": "one small intention for next time"
+  "wants": "one small intention for next time",
+  "prose": "200-400 character paragraph interpreting the window"
 }
 
-Today's events:
-{{events}}
+12h window summary statistics:
+- Event counts by type: {{event_counts}}
+- Total salience: {{salience_sum}}
+- Mood distribution: {{mood_dist}}
+- User interaction frequency: {{interaction_rate}}
 
-Important memories:
+Top retrieved memories (importance × recency × confidence):
 {{memories}}
+```
+
+A second prompt template for §9.11 behavior choreography selection:
+
+```txt
+Pick a single choreography for this moment. Reply with strict JSON only.
+
+Available presets: {{preset_keys}}
+Allowed bubble tokens: …, ?, ♡, !, nyu, boop, mhmm, hmf, ah, oh
+
+Pet state:
+- Mood: {{mood}}
+- Recent salient event: {{event_type}}
+
+Reply shape:
+{ "preset": "<one of preset_keys>", "variant": 0, "bubble": "<one allowed token or empty>" }
 ```
 
 ### 16.4 File Summary
@@ -808,7 +865,7 @@ Skills are declarative JSON files. They cannot run arbitrary code.
 ### 17.2 MVP Built-In Skills
 
 1. `summarize_dropped_file`
-2. `create_daily_reflection`
+2. `create_status_report`  (idle-triggered 12h, §9.8)
 3. `remember_user_preference`
 4. `write_pet_note`
 5. `export_memories`
@@ -958,11 +1015,11 @@ Exit criteria:
 
 - Pet remembers durable preferences across restarts.
 
-### Milestone 4: Reflection and Sandbox
+### Milestone 4: Status Report and Sandbox
 
 Deliver:
 
-- daily reflection
+- idle-triggered 12h status report (§9.8)
 - pet home folder
 - inbox watcher
 - permissioned file summary
@@ -971,6 +1028,7 @@ Deliver:
 Exit criteria:
 
 - Pet can safely inspect approved inbox files and generate local notes/dreams.
+- A status report appears under `dreams/` after the first idle window past 12h, or via deterministic fallback when LLM is offline.
 
 ### Milestone 5: Developer Integration Hooks
 
@@ -1103,12 +1161,20 @@ Post-MVP features may include:
 - [ ] Summarize approved file.
 - [ ] Write note to `notes/`.
 
-### Reflection
+### Status Report
 
-- [ ] Add daily reflection trigger.
-- [ ] Add reflection prompt.
-- [ ] Save dream file.
-- [ ] Show last dream in status panel.
+- [ ] Add 12h idle-window trigger (§9.8 REQ-070..076).
+- [ ] Add summary-statistics aggregator over the 12h window.
+- [ ] Add status-report prompt (§16.3) and deterministic fallback.
+- [ ] Save report file under `dreams/YYYY-MM-DD-HHMM.md`.
+- [ ] Surface "Recent Reports" list in Settings.
+
+### Behavior Choreography
+
+- [ ] Define closed catalog of choreography presets (§9.11 REQ-094..099).
+- [ ] Add LLM choreography-selection prompt + JSON validator.
+- [ ] Wire deterministic fallback when LLM is offline or returns invalid payload.
+- [ ] Generate new sprites for REQ-015 expressive set.
 
 ---
 

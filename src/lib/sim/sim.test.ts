@@ -311,8 +311,8 @@ describe("salience", () => {
 
   it("autonomous LLM call respects cooldown", () => {
     const s = newPetState();
-    expect(shouldCallLLM({ type: "DAILY_REFLECTION_DUE" }, s)).toBe(true);
-    expect(shouldCallLLM({ type: "DAILY_REFLECTION_DUE" }, s)).toBe(false);
+    expect(shouldCallLLM({ type: "STATUS_REPORT_DUE" }, s)).toBe(true);
+    expect(shouldCallLLM({ type: "STATUS_REPORT_DUE" }, s)).toBe(false);
   });
 
   it("eventImportance covers all variants", () => {
