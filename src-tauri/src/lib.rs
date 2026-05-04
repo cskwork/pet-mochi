@@ -74,6 +74,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_pet_state,
             commands::save_pet_state,
+            commands::quit_app,
             commands::get_settings,
             commands::save_settings,
             commands::set_cloud_api_key,
