@@ -452,6 +452,19 @@
     return Number.isFinite(n) ? Math.max(0, Math.min(1.5, n)) : 1;
   }
 
+  // REQ-114 — themed stage backgrounds the stylesheet defines. Anything else
+  // (including "transparent") clears the attribute so the overlay stays
+  // see-through. Mirrors STAGE_BACKGROUNDS in src-tauri/src/models.rs.
+  const STAGE_BACKGROUND_THEMES = new Set(["cream", "blossom", "mint", "night"]);
+
+  function applyStageBackground(value: string | undefined) {
+    if (typeof value === "string" && STAGE_BACKGROUND_THEMES.has(value)) {
+      document.body.dataset.stageBackground = value;
+    } else {
+      delete document.body.dataset.stageBackground;
+    }
+  }
+
   /** True once 12h have elapsed since the last report — the cadence half of
    *  the REQ-070 gate, checked cheaply so quirks can yield the idle window. */
   function statusReportDue(now: number): boolean {
@@ -1287,23 +1300,27 @@
       reducedMotionQuery.removeEventListener("change", onReducedMotionChange);
 
     if (api.hasBackend) {
-      // REQ-113 — load animation intensity and follow live changes from the
-      // settings window.
+      // REQ-113/114 — load animation intensity + stage background and follow
+      // live changes from the settings window.
       try {
         const settings = await api.getSettings();
         animationIntensity = clampIntensity(settings.animationIntensity);
+        applyStageBackground(settings.stageBackground);
       } catch {
-        // Defaults stay at 1.
+        // Defaults stay: intensity 1, transparent stage.
       }
       try {
-        unlistenSettings = await listen<{ animationIntensity?: number }>(
-          "settings:changed",
-          (payload) => {
-            if (payload && typeof payload.animationIntensity === "number") {
-              animationIntensity = clampIntensity(payload.animationIntensity);
-            }
-          },
-        );
+        unlistenSettings = await listen<{
+          animationIntensity?: number;
+          stageBackground?: string;
+        }>("settings:changed", (payload) => {
+          if (payload && typeof payload.animationIntensity === "number") {
+            animationIntensity = clampIntensity(payload.animationIntensity);
+          }
+          if (payload && "stageBackground" in payload) {
+            applyStageBackground(payload.stageBackground);
+          }
+        });
       } catch {
         // Live updates are a nicety; the mount-time read above still applied.
       }
@@ -1426,6 +1443,7 @@
     if (unlistenSettings) unlistenSettings();
     if (unsubscribeBus) unsubscribeBus();
     if (reducedMotionCleanup) reducedMotionCleanup();
+    delete document.body.dataset.stageBackground;
     // Restore non-click-through state so a future window reuse isn't stuck.
     if (api.hasBackend) {
       getCurrentWindow().setIgnoreCursorEvents(false).catch(() => undefined);

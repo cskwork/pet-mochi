@@ -69,6 +69,15 @@ for the research summary and sources.
   overlay updates live. Removed the dead blink interval (MochiSprite ignores
   the prop by design). No new persistent timers were added anywhere.
 
+## Stage backgrounds (REQ-114, user-requested mid-release)
+
+- Settings → General gains "Stage background": fully transparent (default
+  overlay) or themed soft cards — cream, blossom, mint, night. Applied to
+  `body[data-stage-background]` → `#app` with an 18px card radius; live via
+  the `settings:changed` broadcast. Backend clamps to the closed list
+  (`normalize_stage_background`, +2 model tests) and legacy settings blobs
+  deserialize with a `transparent` default.
+
 ## Post-review fixes (code-reviewer subagent pass)
 
 - **CRITICAL** — the REQ-070 idle window required literal `idle` for 60s, but

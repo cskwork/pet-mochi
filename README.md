@@ -11,7 +11,7 @@ optional local LLM. Works fully offline. No accounts. No cloud. No telemetry.
 [![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)](https://tauri.app)
 [![Svelte 5](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte&logoColor=white)](https://svelte.dev)
 [![Rust](https://img.shields.io/badge/Rust-1.77+-orange?logo=rust&logoColor=white)](https://www.rust-lang.org)
-[![Tests](https://img.shields.io/badge/tests-282%20passing-brightgreen)](#run-tests)
+[![Tests](https://img.shields.io/badge/tests-284%20passing-brightgreen)](#run-tests)
 
 <img src="public/sprites/mochi-celebrate.png" width="200" alt="Mochi celebrating" />
 
@@ -103,6 +103,9 @@ core experience.
 - **Behavior choreography (§9.11)** — at salient moments the optional LLM
   picks a named animation preset from a closed catalog; a deterministic
   fallback reacts even fully offline. Closed-vocabulary bubbles only.
+- **Pick your stage** — fully transparent desktop overlay by default, or a
+  soft themed card (cream / blossom / mint / night) from Settings, applied
+  live.
 - **Right-click → Close Mochi** — a tiny context menu since the overlay
   window is frameless.
 - **Persistent memories** — durable preferences and recurring context survive
@@ -220,7 +223,7 @@ sandbox.
 
 ```bash
 npm test                                 # 205 frontend simulation tests (vitest)
-cd src-tauri && cargo test --lib         # 77 backend tests (db, sandbox, llm, prompts)
+cd src-tauri && cargo test --lib         # 79 backend tests (db, sandbox, llm, prompts)
 ```
 
 ### Type-check & build

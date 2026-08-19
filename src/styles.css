@@ -89,6 +89,32 @@ body.browser-preview {
     linear-gradient(135deg, #fff5f8 0%, #f3e9ee 100%);
 }
 
+/* REQ-114 — user-selectable stage background behind the pet. The default
+   ("transparent") has no rule so the classic desktop overlay stays intact;
+   themed values render a soft rounded card on the #app stage. */
+body[data-stage-background="cream"] #app,
+body[data-stage-background="blossom"] #app,
+body[data-stage-background="mint"] #app,
+body[data-stage-background="night"] #app {
+  border-radius: 18px;
+}
+
+body[data-stage-background="cream"] #app {
+  background: linear-gradient(160deg, #fffdf7 0%, #fff1e0 100%);
+}
+
+body[data-stage-background="blossom"] #app {
+  background: linear-gradient(160deg, #fff5f8 0%, #ffdfeb 100%);
+}
+
+body[data-stage-background="mint"] #app {
+  background: linear-gradient(160deg, #f2fff9 0%, #dcf5e9 100%);
+}
+
+body[data-stage-background="night"] #app {
+  background: linear-gradient(160deg, #2c2440 0%, #1c1730 100%);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

@@ -29,6 +29,9 @@ export type Settings = {
   startOnLogin: boolean;
   petHomePath?: string | null;
   developerEventLog: boolean;
+  /** Stage background behind the pet (REQ-114): "transparent" or a themed
+   *  card ("cream" | "blossom" | "mint" | "night"). */
+  stageBackground: string;
   /** Read-only: true if a cloud API key is on disk. The key value is never returned. */
   cloudApiKeySet: boolean;
 };
