@@ -1353,6 +1353,13 @@ the existing tick / hit-test / frame-cycle timers (one-shot timers for
 animation sequencing are fine). No sound. No focus stealing. All new
 visuals are `transform`/`opacity` only.
 
+**REQ-114:** Stage background: Settings offers a stage-background choice —
+fully transparent (the default desktop overlay) plus themed soft cards
+(`cream`, `blossom`, `mint`, `night`). The choice persists in settings,
+applies live to the pet window via the `settings:changed` broadcast, and
+the backend clamps the value to the closed list so arbitrary strings never
+reach the DOM. Unknown or legacy-missing values fall back to transparent.
+
 ### 27.7 Acceptance criteria (v0.2)
 
 1. All four checks pass: `npm test`, `npm run check` (0/0),

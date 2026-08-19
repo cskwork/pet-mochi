@@ -342,6 +342,16 @@
           <span>{settings.animationIntensity.toFixed(1)}× {settings.animationIntensity === 0 ? "(particles & quirks off)" : ""}</span>
         </label>
         <label>
+          Stage background
+          <select bind:value={settings.stageBackground}>
+            <option value="transparent">Fully transparent (desktop overlay)</option>
+            <option value="cream">Cream card</option>
+            <option value="blossom">Blossom pink</option>
+            <option value="mint">Mint</option>
+            <option value="night">Night</option>
+          </select>
+        </label>
+        <label>
           Pet home folder
           <input bind:value={settings.petHomePath} placeholder="(default user data dir)" />
         </label>
