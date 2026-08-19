@@ -11,7 +11,7 @@ optional local LLM. Works fully offline. No accounts. No cloud. No telemetry.
 [![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)](https://tauri.app)
 [![Svelte 5](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte&logoColor=white)](https://svelte.dev)
 [![Rust](https://img.shields.io/badge/Rust-1.77+-orange?logo=rust&logoColor=white)](https://www.rust-lang.org)
-[![Tests](https://img.shields.io/badge/tests-284%20passing-brightgreen)](#run-tests)
+[![Tests](https://img.shields.io/badge/tests-291%20passing-brightgreen)](#run-tests)
 
 <img src="public/sprites/mochi-celebrate.png" width="200" alt="Mochi celebrating" />
 
@@ -93,8 +93,12 @@ core experience.
   crumbs, confetti, z's) on care moments.
 - **Mood you can read at a glance** — color tints + glyphs (🍡 hungry,
   … bored, ♡ lonely, ? curious) so similar mood tones stay distinguishable.
-- **Tamagotchi-style actions** — Feed (with a 3-snack tray and a hidden
-  favorite snack to discover) · Play · Pat · Rest · Report.
+- **Tamagotchi-style actions** — Feed (with a 3-snack tray, snack-specific
+  eating sprites, and a hidden favorite snack to discover) · Play · Pat ·
+  Rest · Report.
+- **Tiny sound effects (optional)** — synthesized chirps acknowledge your
+  actions (pat boop, nom-nom, play bounce); Mochi never beeps on her own,
+  and a settings toggle silences everything.
 - **Loves you back** — tiered welcome-back rituals after an absence (never
   guilt, always joy), keepsake gifts after good care days (collected on a
   shelf in Settings), hatch-day anniversaries, morning/evening rituals.
@@ -106,8 +110,8 @@ core experience.
 - **Pick your stage** — fully transparent desktop overlay by default, or a
   soft themed card (cream / blossom / mint / night) from Settings, applied
   live.
-- **Right-click → Close Mochi** — a tiny context menu since the overlay
-  window is frameless.
+- **Right-click → Settings… / Close Mochi** — a tiny context menu since the
+  overlay window is frameless.
 - **Persistent memories** — durable preferences and recurring context survive
   restarts. Review, export, or delete from Settings.
 - **12h idle-triggered status reports** — fires autonomously when ≥12h has
@@ -222,7 +226,7 @@ sandbox.
 ### Run tests
 
 ```bash
-npm test                                 # 205 frontend simulation tests (vitest)
+npm test                                 # 212 frontend simulation tests (vitest)
 cd src-tauri && cargo test --lib         # 79 backend tests (db, sandbox, llm, prompts)
 ```
 
@@ -259,7 +263,8 @@ either implemented or explicitly out-of-scope. Highlights:
 - ✅ Declarative skill manifests, no remote skill installation (REQ-090…093)
 - ✅ Behavior choreography with closed presets + closed bubble vocabulary (REQ-094…099)
 - ✅ v0.2 The Adorable Update — juice, quirks, snacks & favorite, greetings,
-  keepsakes, hatch-day, rituals, drag physics, intensity guardrails (REQ-100…113, PRD §27)
+  keepsakes, hatch-day, rituals, drag physics, stage backgrounds, sound toggle,
+  settings access, snack sprites, intensity guardrails (REQ-100…117, PRD §27)
 
 Out of scope for MVP (per PRD §4.2): voice, 3D/Live2D, browser automation,
 shell execution, cloud sync, marketplace plugins.
