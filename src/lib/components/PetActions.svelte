@@ -10,8 +10,16 @@
     busy?: ActionKey | null;
     /** True while a report request is in flight; shows a writing indicator. */
     reporting?: boolean;
+    /** REQ-107 — Feed opens a snack-tray menu; mirrored as aria-expanded. */
+    feedExpanded?: boolean;
   };
-  let { onAction, onReport, busy = null, reporting = false }: Props = $props();
+  let {
+    onAction,
+    onReport,
+    busy = null,
+    reporting = false,
+    feedExpanded = false,
+  }: Props = $props();
 
   // Order is intentional: feed/play together (active), pat/rest together (calm).
   const ORDER: ActionKey[] = ["feed", "play", "pet", "rest"];
@@ -40,6 +48,8 @@
       disabled={busy === a.key}
       title={a.hint}
       aria-label={a.label}
+      aria-haspopup={a.key === "feed" ? "menu" : undefined}
+      aria-expanded={a.key === "feed" ? feedExpanded : undefined}
     >
       <span class="icon" aria-hidden="true">{a.icon}</span>
       <span class="label">{a.label}</span>
