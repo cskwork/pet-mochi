@@ -8,9 +8,14 @@
     type EventLogEntry,
     type StatusReport,
   } from "../bridge/api";
+  import { emit } from "../bridge/tauri";
+  import { KEEPSAKE_MEMORY_TYPE } from "../sim";
 
   let settings = $state<Settings | null>(null);
   let memories = $state<Memory[]>([]);
+  // REQ-109 — keepsakes render on their own shelf, not in the memory list.
+  let keepsakes = $derived(memories.filter((m) => m.type === KEEPSAKE_MEMORY_TYPE));
+  let plainMemories = $derived(memories.filter((m) => m.type !== KEEPSAKE_MEMORY_TYPE));
   let inbox = $state<InboxFile[]>([]);
   let events = $state<EventLogEntry[]>([]);
   let recentReports = $state<StatusReport[]>([]);
@@ -66,6 +71,9 @@
     try {
       settings = await api.saveSettings(settings);
       savingMessage = "saved ✓";
+      // REQ-113 — broadcast so the pet overlay picks up e.g. animation
+      // intensity without a restart. Best-effort.
+      void emit("settings:changed", settings).catch(() => undefined);
     } catch (e) {
       savingMessage = `error: ${(e as Error).message}`;
     }
@@ -327,11 +335,11 @@
           <input
             type="range"
             min="0"
-            max="2"
+            max="1.5"
             step="0.1"
             bind:value={settings.animationIntensity}
           />
-          <span>{settings.animationIntensity.toFixed(1)}×</span>
+          <span>{settings.animationIntensity.toFixed(1)}× {settings.animationIntensity === 0 ? "(particles & quirks off)" : ""}</span>
         </label>
         <label>
           Pet home folder
@@ -351,6 +359,34 @@
     {#if activeTab === "memory"}
       <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
       <section id="panel-memory" role="tabpanel" aria-labelledby="tab-memory">
+        <h3>Keepsake shelf</h3>
+        <p class="hint">
+          Little gifts Mochi leaves when she feels well cared for (PRD §27.5).
+        </p>
+        {#if keepsakes.length === 0}
+          <p class="hint">
+            Nothing here yet — keep Mochi fed, played with, and patted, and
+            she'll bring you something.
+          </p>
+        {:else}
+          <ul class="keepsake-shelf">
+            {#each keepsakes as k (k.id)}
+              <li>
+                <p class="keepsake-content">{k.content}</p>
+                <div class="row">
+                  <small>{new Date(k.createdAt).toLocaleDateString()}</small>
+                  <button
+                    class="danger"
+                    onclick={() => deleteMemory(k.id)}
+                    aria-label={`Delete keepsake: ${k.content}`}
+                  >delete</button>
+                </div>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+
+        <h3>Memories</h3>
         <p class="hint">
           Memories live in your local SQLite database. They are private until you export or share them.
         </p>
@@ -361,11 +397,11 @@
             <span class="status">→ {exportPath}</span>
           {/if}
         </div>
-        {#if memories.length === 0}
+        {#if plainMemories.length === 0}
           <p class="hint">No durable memories yet — chat with Mochi to seed them.</p>
         {:else}
           <ul class="memory-list">
-            {#each memories as m (m.id)}
+            {#each plainMemories as m (m.id)}
               <li>
                 <div>
                   <span class="tag">{m.type}</span>
@@ -598,6 +634,33 @@
     gap: 8px;
     max-height: 320px;
     overflow-y: auto;
+  }
+  .keepsake-shelf {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 8px;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+  .keepsake-shelf li {
+    background: linear-gradient(180deg, #fff4e8, var(--mochi-cream));
+    border: 1px dashed #ecd7c2;
+    border-radius: 10px;
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .keepsake-content {
+    margin: 0;
+    font-size: 12px;
+  }
+  h3 {
+    margin: 6px 0 0;
+    font-size: 14px;
   }
   .memory-list li,
   .inbox-list li {

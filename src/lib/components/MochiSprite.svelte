@@ -223,6 +223,40 @@
     animation: leanIn 0.7s ease-in-out infinite;
   }
 
+  /* REQ-100 — expressive set (REQ-015) motion. Each pose is a single PNG, so
+     a transform-only keyframe carries the movement the name promises. */
+  .mochi[data-anim="stretch"] .sprite {
+    animation: stretchUp 1.2s ease-in-out infinite;
+  }
+
+  .mochi[data-anim="peek"] .sprite {
+    animation: peekSide 1.4s ease-in-out infinite;
+  }
+
+  .mochi[data-anim="tilt_head"] .sprite {
+    animation: tiltHold 1.6s ease-in-out infinite;
+  }
+
+  .mochi[data-anim="shake"] .sprite {
+    animation: shakeX 0.4s ease-in-out infinite;
+  }
+
+  .mochi[data-anim="nuzzle"] .sprite {
+    animation: nuzzleIn 1.1s ease-in-out infinite;
+  }
+
+  .mochi[data-anim="wiggle"] .sprite {
+    animation: wiggle 0.45s ease-in-out infinite;
+  }
+
+  .mochi[data-anim="dizzy"] .sprite {
+    animation: dizzyWobble 0.9s linear infinite;
+  }
+
+  .mochi[data-anim="surprise"] .sprite {
+    animation: surprisePop 0.55s ease-out infinite;
+  }
+
   @keyframes breathe {
     0%,
     100% {
@@ -312,6 +346,86 @@
     }
     50% {
       transform: scaleX(var(--scale-x)) translateY(2px) rotate(2deg);
+    }
+  }
+
+  @keyframes stretchUp {
+    0%,
+    100% {
+      transform: scaleX(var(--scale-x)) scale(1, 1) translateY(0);
+    }
+    50% {
+      transform: scaleX(var(--scale-x)) scale(0.97, 1.07) translateY(-3px);
+    }
+  }
+
+  @keyframes peekSide {
+    0%,
+    100% {
+      transform: scaleX(var(--scale-x)) translateX(0) rotate(0deg);
+    }
+    50% {
+      transform: scaleX(var(--scale-x)) translateX(4px) rotate(3deg);
+    }
+  }
+
+  @keyframes tiltHold {
+    0%,
+    100% {
+      transform: scaleX(var(--scale-x)) rotate(-5deg);
+    }
+    50% {
+      transform: scaleX(var(--scale-x)) rotate(-9deg) translateY(1px);
+    }
+  }
+
+  @keyframes shakeX {
+    0%,
+    100% {
+      transform: scaleX(var(--scale-x)) translateX(-2px);
+    }
+    50% {
+      transform: scaleX(var(--scale-x)) translateX(2px);
+    }
+  }
+
+  @keyframes nuzzleIn {
+    0%,
+    100% {
+      transform: scaleX(var(--scale-x)) rotate(0deg) translateX(0);
+    }
+    50% {
+      transform: scaleX(var(--scale-x)) rotate(4deg) translateX(3px) translateY(1px);
+    }
+  }
+
+  @keyframes dizzyWobble {
+    0% {
+      transform: scaleX(var(--scale-x)) rotate(-8deg) translateX(-2px);
+    }
+    25% {
+      transform: scaleX(var(--scale-x)) rotate(0deg) translateY(-2px);
+    }
+    50% {
+      transform: scaleX(var(--scale-x)) rotate(8deg) translateX(2px);
+    }
+    75% {
+      transform: scaleX(var(--scale-x)) rotate(0deg) translateY(2px);
+    }
+    100% {
+      transform: scaleX(var(--scale-x)) rotate(-8deg) translateX(-2px);
+    }
+  }
+
+  @keyframes surprisePop {
+    0% {
+      transform: scaleX(var(--scale-x)) scale(1, 1);
+    }
+    30% {
+      transform: scaleX(var(--scale-x)) scale(1.07, 1.07) translateY(-2px);
+    }
+    100% {
+      transform: scaleX(var(--scale-x)) scale(1, 1);
     }
   }
 
@@ -420,6 +534,14 @@
     .mochi[data-anim="yawn"] .sprite,
     .mochi[data-anim="roll"] .sprite,
     .mochi[data-anim="blush"] .sprite,
+    .mochi[data-anim="stretch"] .sprite,
+    .mochi[data-anim="peek"] .sprite,
+    .mochi[data-anim="tilt_head"] .sprite,
+    .mochi[data-anim="shake"] .sprite,
+    .mochi[data-anim="nuzzle"] .sprite,
+    .mochi[data-anim="wiggle"] .sprite,
+    .mochi[data-anim="dizzy"] .sprite,
+    .mochi[data-anim="surprise"] .sprite,
     .mark {
       animation: none !important;
     }
