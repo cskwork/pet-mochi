@@ -11,6 +11,9 @@
     /** Stat key currently being flashed (briefly highlighted). Lets the user
         see that an action registered even when the value is already at cap. */
     flashedStat?: string | null;
+    /** REQ-115 — opens the settings window; rendered as a small gear at the
+        end of the open panel. */
+    onOpenSettings?: () => void;
   };
   let {
     pet,
@@ -18,6 +21,7 @@
     open = false,
     onToggle,
     flashedStat = null,
+    onOpenSettings,
   }: Props = $props();
 
   type Bar = {
@@ -74,6 +78,15 @@
       </span>
     {/each}
     {#if saving}<span class="meta saving" aria-live="polite">saving…</span>{/if}
+    {#if onOpenSettings}
+      <button
+        type="button"
+        class="gear"
+        onclick={() => onOpenSettings?.()}
+        aria-label="Open settings"
+        title="Open settings"
+      >⚙️</button>
+    {/if}
     {#if onToggle}
       <button
         type="button"
@@ -178,6 +191,32 @@
     height: 100%;
     border-radius: 999px;
     transition: width 0.4s ease, background 0.4s ease;
+  }
+  /* REQ-115 — small settings gear, bottom-right of the open panel (it sits
+     at the end of the last wrapped row, just before the close button). */
+  .gear {
+    margin-left: auto;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: rgba(255, 240, 245, 0.8);
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+    transition: background 0.15s ease, transform 0.08s ease;
+  }
+  .gear:hover {
+    background: rgba(255, 218, 232, 0.95);
+  }
+  .gear:active {
+    transform: scale(0.92);
+  }
+  /* When the gear is present it owns the auto margin; the close button then
+     hugs it instead of drifting to a second flex-end. */
+  .gear + .close {
+    margin-left: 0;
   }
   .close {
     /* Always sits at the end of the row; always visible. Slightly bigger

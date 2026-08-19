@@ -71,10 +71,22 @@ pub fn run() {
             app.manage(app_state);
             Ok(())
         })
+        // REQ-115 — the settings window is created hidden and re-shown by the
+        // open_settings command; closing it hides instead of destroying so it
+        // can always be reopened from the pet's context menu.
+        .on_window_event(|window, event| {
+            if window.label() == "settings" {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             commands::get_pet_state,
             commands::save_pet_state,
             commands::quit_app,
+            commands::open_settings,
             commands::get_settings,
             commands::save_settings,
             commands::set_cloud_api_key,

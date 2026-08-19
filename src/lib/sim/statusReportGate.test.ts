@@ -34,7 +34,7 @@ describe("shouldFireStatusReport — REQ-070..074", () => {
     expect(shouldFireStatusReport(input({ inFlight: true }))).toBe(false);
   });
 
-  it("does not fire when the pet is mid-animation (not idle/sleep)", () => {
+  it("does not fire when the pet is mid-animation (busy poses)", () => {
     expect(shouldFireStatusReport(input({ currentAnimation: "celebrate" }))).toBe(false);
     expect(shouldFireStatusReport(input({ currentAnimation: "walk" }))).toBe(false);
     expect(shouldFireStatusReport(input({ currentAnimation: "eat" }))).toBe(false);
@@ -42,6 +42,14 @@ describe("shouldFireStatusReport — REQ-070..074", () => {
 
   it("fires when the pet is asleep (sleep counts as an idle window)", () => {
     expect(shouldFireStatusReport(input({ currentAnimation: "sleep" }))).toBe(true);
+  });
+
+  // chooseMovement re-rolls uniformly among idle/sit/look_cursor every 3s
+  // tick, so literal-`idle` dwell would have probability (1/3)^20 over the
+  // 60s window — the calm resting poses must all count as the idle window.
+  it("fires from sit and look_cursor too — the calm resting poses", () => {
+    expect(shouldFireStatusReport(input({ currentAnimation: "sit" }))).toBe(true);
+    expect(shouldFireStatusReport(input({ currentAnimation: "look_cursor" }))).toBe(true);
   });
 
   it("does not fire when the idle dwell is shorter than 60s", () => {
@@ -113,7 +121,10 @@ describe("shouldFireStatusReport — REQ-070..074", () => {
     expect(STATUS_REPORT_GATE_CONSTANTS.TWELVE_HOURS_MS).toBe(12 * 60 * 60 * 1000);
     expect(STATUS_REPORT_GATE_CONSTANTS.IDLE_DWELL_MS).toBe(60_000);
     expect(STATUS_REPORT_GATE_CONSTANTS.IDLE_STATES.has("idle")).toBe(true);
+    expect(STATUS_REPORT_GATE_CONSTANTS.IDLE_STATES.has("sit")).toBe(true);
+    expect(STATUS_REPORT_GATE_CONSTANTS.IDLE_STATES.has("look_cursor")).toBe(true);
     expect(STATUS_REPORT_GATE_CONSTANTS.IDLE_STATES.has("sleep")).toBe(true);
     expect(STATUS_REPORT_GATE_CONSTANTS.IDLE_STATES.has("celebrate")).toBe(false);
+    expect(STATUS_REPORT_GATE_CONSTANTS.IDLE_STATES.has("walk")).toBe(false);
   });
 });

@@ -187,9 +187,40 @@ pub struct Settings {
     pub start_on_login: bool,
     pub pet_home_path: Option<String>,
     pub developer_event_log: bool,
+    /// Stage background behind the pet (PRD §27.6 REQ-114): "transparent"
+    /// keeps the classic desktop overlay; the themed values render a soft
+    /// card. Unknown values normalize to "transparent" on save. Defaulted so
+    /// settings blobs persisted before v0.2 still deserialize.
+    #[serde(default = "default_stage_background")]
+    pub stage_background: String,
+    /// Sound effects (PRD §27.6 REQ-117). Synth-only chirps for
+    /// user-initiated actions; autonomous behaviors always stay silent.
+    /// Defaulted so pre-v0.2 settings blobs still deserialize.
+    #[serde(default = "default_true")]
+    pub sound_effects: bool,
     /// Read-only flag: true if a cloud API key is on disk. Never carries the key value.
     #[serde(default)]
     pub cloud_api_key_set: bool,
+}
+
+/// Closed list of stage backgrounds the frontend styles (REQ-114).
+pub const STAGE_BACKGROUNDS: [&str; 5] = ["transparent", "cream", "blossom", "mint", "night"];
+
+fn default_stage_background() -> String {
+    "transparent".to_string()
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Clamp a requested stage background to the closed list (REQ-114).
+pub fn normalize_stage_background(value: &str) -> &'static str {
+    STAGE_BACKGROUNDS
+        .iter()
+        .find(|v| **v == value)
+        .copied()
+        .unwrap_or("transparent")
 }
 
 impl Default for Settings {
@@ -208,6 +239,8 @@ impl Default for Settings {
             start_on_login: false,
             pet_home_path: None,
             developer_event_log: false,
+            stage_background: default_stage_background(),
+            sound_effects: true,
             cloud_api_key_set: false,
         }
     }
@@ -274,7 +307,25 @@ pub fn endpoint_is_loopback(endpoint: &str) -> bool {
 
 #[cfg(test)]
 mod model_tests {
-    use super::endpoint_is_loopback;
+    use super::{endpoint_is_loopback, normalize_stage_background, Settings};
+
+    /// REQ-114/117 — settings blobs persisted before the fields existed must
+    /// still deserialize, defaulting to the transparent overlay and sounds on.
+    #[test]
+    fn settings_legacy_json_defaults_new_fields() {
+        let legacy = r#"{"petName":"Mochi","personalityPreset":"curious","llmProvider":"ollama","ollamaEndpoint":"http://localhost:11434","ollamaModel":"gemma4:e2b","localOnlyMode":true,"autonomousSpeech":true,"memoryEnabled":true,"animationIntensity":1.0,"alwaysOnTop":true,"startOnLogin":false,"petHomePath":null,"developerEventLog":false}"#;
+        let s: Settings = serde_json::from_str(legacy).unwrap();
+        assert_eq!(s.stage_background, "transparent");
+        assert!(s.sound_effects);
+    }
+
+    #[test]
+    fn stage_background_normalizes_to_closed_list() {
+        assert_eq!(normalize_stage_background("night"), "night");
+        assert_eq!(normalize_stage_background("transparent"), "transparent");
+        assert_eq!(normalize_stage_background("hotpink; url(evil)"), "transparent");
+        assert_eq!(normalize_stage_background(""), "transparent");
+    }
 
     #[test]
     fn loopback_classification_basic() {
