@@ -58,10 +58,16 @@
   onMount(() => {
     document.body.classList.add("settings-page");
     void load();
+    // REQ-115 — the window is hidden-on-close and re-shown by the pet's
+    // context menu, so this component mounts once at app start. Refresh on
+    // focus so memories/keepsakes/reports reflect what happened since.
+    const onFocus = () => void load();
+    window.addEventListener("focus", onFocus);
     // Returned cleanup runs on component destroy in Svelte 5; without it the
     // settings background style leaks back onto the pet view in SPA navigation.
     return () => {
       document.body.classList.remove("settings-page");
+      window.removeEventListener("focus", onFocus);
     };
   });
 
@@ -317,6 +323,10 @@
         <label class="row">
           <input type="checkbox" bind:checked={settings.autonomousSpeech} />
           Allow autonomous chat bubbles
+        </label>
+        <label class="row">
+          <input type="checkbox" bind:checked={settings.soundEffects} />
+          Sound effects (tiny chirps on feed/pat/play — Mochi never beeps on her own)
         </label>
         <label class="row">
           <input type="checkbox" bind:checked={settings.memoryEnabled} />
