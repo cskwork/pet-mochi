@@ -71,7 +71,7 @@ export function applySnackFeed(
   const favorite = favoriteSnackFor(state.id, state.createdAt);
   const isFavorite = snack === favorite;
   const favoriteDiscovered = isFavorite && !alreadyDiscovered;
-  const steps = isFavorite ? favoriteFeedSteps() : plainFeedSteps();
+  const steps = isFavorite ? favoriteFeedSteps(snack) : plainFeedSteps(snack);
 
   const next: PetState = {
     ...state,
@@ -123,24 +123,39 @@ export function isFavoriteDiscoveredInMemories(
   );
 }
 
-// Mirrors actions.ts feedSteps — kept private there, and the favorite variant
-// needs its own shape anyway.
-function plainFeedSteps(): AnimationStep[] {
+/** REQ-116 — the bite/chew frame pair that shows the snack the user actually
+ *  picked. Dango keeps the original eat/eat_2 art. */
+export function eatFramesFor(snack: SnackKey): [MovementState, MovementState] {
+  switch (snack) {
+    case "strawberry":
+      return ["eat_strawberry", "eat_strawberry_2"];
+    case "cookie":
+      return ["eat_cookie", "eat_cookie_2"];
+    case "dango":
+      return ["eat", "eat_2"];
+  }
+}
+
+// Mirrors actions.ts feedSteps — kept private there, and the snack tray needs
+// per-snack frames (REQ-116) plus a favorite variant anyway.
+function plainFeedSteps(snack: SnackKey): AnimationStep[] {
+  const [bite, chew] = eatFramesFor(snack);
   return [
-    { animation: "eat", durationMs: 380 },
-    { animation: "eat_2", durationMs: 380 },
-    { animation: "eat", durationMs: 380 },
-    { animation: "eat_2", durationMs: 380 },
+    { animation: bite, durationMs: 380 },
+    { animation: chew, durationMs: 380 },
+    { animation: bite, durationMs: 380 },
+    { animation: chew, durationMs: 380 },
     { animation: "celebrate", durationMs: 700 },
   ];
 }
 
-function favoriteFeedSteps(): AnimationStep[] {
+function favoriteFeedSteps(snack: SnackKey): AnimationStep[] {
+  const [bite, chew] = eatFramesFor(snack);
   return [
-    { animation: "eat", durationMs: 340 },
-    { animation: "eat_2", durationMs: 340 },
-    { animation: "eat", durationMs: 340 },
-    { animation: "eat_2", durationMs: 340 },
+    { animation: bite, durationMs: 340 },
+    { animation: chew, durationMs: 340 },
+    { animation: bite, durationMs: 340 },
+    { animation: chew, durationMs: 340 },
     { animation: "blush", durationMs: 560 },
     { animation: "celebrate", durationMs: 700 },
   ];

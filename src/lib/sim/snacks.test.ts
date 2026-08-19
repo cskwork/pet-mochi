@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   applySnackFeed,
+  eatFramesFor,
   FAVORITE_MEMORY_MARKER,
   FAVORITE_MEMORY_TYPE,
   favoriteSnackFor,
@@ -120,6 +121,28 @@ describe("REQ-107 favorite discovery", () => {
     // Both settle on celebrate so the resting pose reads as satisfied.
     expect(fav.steps[fav.steps.length - 1].animation).toBe("celebrate");
     expect(plain.steps[plain.steps.length - 1].animation).toBe("celebrate");
+  });
+});
+
+describe("REQ-116 snack-specific eat frames", () => {
+  it("each snack maps to its own bite/chew pair; dango keeps the originals", () => {
+    expect(eatFramesFor("strawberry")).toEqual(["eat_strawberry", "eat_strawberry_2"]);
+    expect(eatFramesFor("cookie")).toEqual(["eat_cookie", "eat_cookie_2"]);
+    expect(eatFramesFor("dango")).toEqual(["eat", "eat_2"]);
+  });
+
+  it("feeding a snack plays that snack's frames, not the dango skewer", () => {
+    const p = pet();
+    for (const key of SNACK_KEYS) {
+      const [bite, chew] = eatFramesFor(key);
+      const anims = applySnackFeed(p, key, true).steps.map((s) => s.animation);
+      expect(anims, key).toContain(bite);
+      expect(anims, key).toContain(chew);
+      if (key !== "dango") {
+        expect(anims, key).not.toContain("eat");
+        expect(anims, key).not.toContain("eat_2");
+      }
+    }
   });
 });
 
