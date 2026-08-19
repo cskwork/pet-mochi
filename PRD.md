@@ -1225,8 +1225,11 @@ Findings from virtual-pet and desktop-pet product research (2026-08):
 
 1. **Kind, never needy.** No guilt copy, no punishment mechanics, no
    notifications. Absence is greeted with joy, not reproach.
-2. **Quiet by default.** No sound of any kind in v0.2. No focus stealing.
-   Self-initiated behavior stays inside the existing cooldown budgets.
+2. **Quiet by default.** No focus stealing; self-initiated behavior stays
+   inside the existing cooldown budgets. Sound exists only as tiny synth
+   chirps acknowledging the user's *own* actions (REQ-117) — autonomous
+   behaviors (nudges, quirks, rituals, reports) are always silent, and a
+   settings toggle turns sound off entirely.
 3. **Deterministic first.** Every v0.2 feature works fully with the LLM off.
    The LLM only garnishes (closed-vocabulary bubbles via §9.11).
 4. **Performance ceiling is a feature.** No new persistent timers — new
@@ -1360,6 +1363,27 @@ applies live to the pet window via the `settings:changed` broadcast, and
 the backend clamps the value to the closed list so arbitrary strings never
 reach the DOM. Unknown or legacy-missing values fall back to transparent.
 
+**REQ-115:** Settings must be reachable from the pet: the right-click
+context menu gains a "Settings…" item that shows the settings window
+(created hidden at startup; closing it hides rather than destroys it so it
+can always be reopened). The settings view refreshes its data when the
+window regains focus.
+
+**REQ-116:** Snack-specific eat frames: feeding a snack from the tray must
+show that snack in the pet's paws — dedicated bite/chew sprite pairs for
+strawberry and cookie (generated in the existing hand-drawn style), with
+dango keeping the original `eat`/`eat_2` art. Frames follow the same chew
+motion, glyph-suppression, and reduced-motion rules as the originals.
+
+**REQ-117:** Sound effects: tiny synthesized chirps (Web Audio oscillators,
+no asset files) acknowledge user-initiated moments only — pat, snack tray
+and feeding, play, rest, favorite discovery, keepsake, welcome-back, and
+hatch-day. Autonomous behaviors (nudges, quirks, rituals, reports) stay
+silent. Effects are ≤600 ms, note gain ≤0.15, frequencies in a soft
+150–1200 Hz band (enforced by test). A "Sound effects" settings toggle
+(default on) gates everything and applies live via `settings:changed`;
+audio failures must never surface to the pet.
+
 ### 27.7 Acceptance criteria (v0.2)
 
 1. All four checks pass: `npm test`, `npm run check` (0/0),
@@ -1382,8 +1406,9 @@ reach the DOM. Unknown or legacy-missing values fall back to transparent.
 2. **Typing-rhythm reactions (Bongo Cat mode)** — requires global input
    listening; a privacy surface we refuse for now (§10.4 spirit).
 3. **Window-edge perching** — needs per-platform window enumeration APIs.
-4. **Sound** — top uninstall complaint for desktop pets; would need an
-   opt-in design pass first.
+4. **Sound** — ~~deferred~~ superseded by REQ-117 at the user's request:
+   shipped as user-action-only synth chirps with a settings toggle, keeping
+   the anti-annoyance guardrail (autonomous behavior stays silent).
 5. **Wardrobe, growth stages, care-streak candle** — need new art or
    deeper persistence; queued behind v0.2 validation.
 6. **Multiple pets, Live2D/VRM, voice** — unchanged from §4.2.

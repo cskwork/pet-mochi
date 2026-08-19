@@ -78,6 +78,30 @@ for the research summary and sources.
   (`normalize_stage_background`, +2 model tests) and legacy settings blobs
   deserialize with a `transparent` default.
 
+## Settings access, snack art, and sound (REQ-115..117, user-requested)
+
+- **REQ-115** — the settings window finally has a way in: right-click →
+  "Settings…" shows it (new `open_settings` command); closing hides instead
+  of destroying (`on_window_event` CloseRequested → hide) so it always
+  reopens; the view reloads on window focus so memories/keepsakes/reports
+  stay fresh. Audit: no UI path to Settings existed at all since v0.1.
+- **REQ-116** — snack-specific eat sprites: 4 new hand-drawn-style frames
+  (`mochi-eat-strawberry-1/2.png`, `mochi-eat-cookie-1/2.png`) generated
+  with GPT Image 2 from the original dango frames as style references,
+  background-stripped through the same corner-detect + flood-fill pipeline
+  (1254×1254, verified alpha). New `MovementState` literals + SRC entries +
+  chew/reduced-motion CSS + glyph suppression via an `isEating` derived;
+  `applySnackFeed` plays the picked snack's frames (dango keeps the
+  originals).
+- **REQ-117** — sound effects: `src/lib/audio/sfx.ts` synthesizes tiny
+  oscillator chirps (no asset files) for user-initiated moments only — pat
+  boop, tray pop, nom-nom, play bounce, rest settle, discovery/keepsake
+  sparkle, greeting/hatch-day chime. Autonomous behaviors stay silent.
+  Note tables are pure and tested (≤600 ms, gain ≤0.15, 150–1200 Hz).
+  "Sound effects" toggle in Settings (default on), live via
+  `settings:changed`; lazy AudioContext for autoplay policies; audio
+  failures are swallowed.
+
 ## Post-review fixes (code-reviewer subagent pass)
 
 - **CRITICAL** — the REQ-070 idle window required literal `idle` for 60s, but
