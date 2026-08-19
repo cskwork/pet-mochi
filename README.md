@@ -11,7 +11,7 @@ optional local LLM. Works fully offline. No accounts. No cloud. No telemetry.
 [![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)](https://tauri.app)
 [![Svelte 5](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte&logoColor=white)](https://svelte.dev)
 [![Rust](https://img.shields.io/badge/Rust-1.77+-orange?logo=rust&logoColor=white)](https://www.rust-lang.org)
-[![Tests](https://img.shields.io/badge/tests-99%20passing-brightgreen)](#run-tests)
+[![Tests](https://img.shields.io/badge/tests-292%20passing-brightgreen)](#run-tests)
 
 <img src="public/sprites/mochi-celebrate.png" width="200" alt="Mochi celebrating" />
 
@@ -84,36 +84,50 @@ core experience.
 
 - **Lives as a transparent always-on-top overlay** — drag her anywhere on the
   desktop, click-through hit-testing keeps the rest of your screen usable.
-- **Animates 14 sprite states** — idle / walk / run / sleep / jump / sit /
-  look-cursor / hide / celebrate / eat / yawn / roll / blush — driven by a
-  pure-function state machine.
+- **Animates 22 sprite states** — idle / walk / run / sleep / jump / sit /
+  look-cursor / hide / celebrate / eat / yawn / roll / blush plus the
+  expressive set (stretch / peek / tilt-head / shake / nuzzle / wiggle /
+  dizzy / surprise), each with its own CSS motion.
+- **Feels alive between interactions** — mood-weighted idle micro-quirks,
+  squash-and-stretch juice on every press, and particle bursts (hearts,
+  crumbs, confetti, z's) on care moments.
 - **Mood you can read at a glance** — color tints + glyphs (🍡 hungry,
   … bored, ♡ lonely, ? curious) so similar mood tones stay distinguishable.
-- **Tamagotchi-style actions** — Feed · Play · Pat · Rest · Report, each with
-  multi-frame animation sequences.
-- **Right-click → Close Mochi** — a tiny context menu since the overlay
-  window is frameless.
+- **Tamagotchi-style actions** — Feed (with a 3-snack tray, snack-specific
+  eating sprites, and a hidden favorite snack to discover) · Play · Pat ·
+  Rest · Report.
+- **Tiny sound effects (optional)** — synthesized chirps acknowledge your
+  actions (pat boop, nom-nom, play bounce); Mochi never beeps on her own,
+  and a settings toggle silences everything.
+- **Loves you back** — tiered welcome-back rituals after an absence (never
+  guilt, always joy), keepsake gifts after good care days (collected on a
+  shelf in Settings), hatch-day anniversaries, morning/evening rituals.
+- **Pick-up physics** — drag her and she dangles in surprise; drop her and
+  she lands with a squash-bounce (and a dizzy wobble after long flights).
+- **Behavior choreography (§9.11)** — at salient moments the optional LLM
+  picks a named animation preset from a closed catalog; a deterministic
+  fallback reacts even fully offline. Closed-vocabulary bubbles only.
+- **Pick your stage** — fully transparent desktop overlay by default, or a
+  soft themed card (cream / blossom / mint / night) from Settings, applied
+  live.
+- **Settings, two ways in** — a small ⚙ in the opened status panel, or
+  right-click → Settings… (the same menu also has Close Mochi, since the
+  overlay window is frameless).
 - **Persistent memories** — durable preferences and recurring context survive
   restarts. Review, export, or delete from Settings.
-- **Daily reflections** — once a day Mochi writes a short "dream" file
-  summarizing what she learned and noticed.
+- **12h idle-triggered status reports** — fires autonomously when ≥12h has
+  elapsed and Mochi finds a quiet minute; missed windows are dropped
+  (no catch-up). Browse them in Settings → Sandbox.
 - **File summaries with consent** — drop a `.txt` / `.md` / `.json` into the
-  inbox; Mochi asks before reading it.
+  inbox; Mochi notices with a curious peek and asks before reading it.
 - **Optional Ollama chat** — short, mood-aware in-character replies. Hard
   cooldown, graceful fallback when the model is offline.
 
 ### Coming next (roadmap)
 
-- **Behavior choreography (§9.11, REQ-094…099)** — LLM expresses emotion through
-  named animation presets, never free text. Closed-vocabulary bubbles only.
-- **12h idle-triggered status report (§9.8, REQ-070…076)** — replaces the
-  fixed daily cadence. Fires only when the host is idle and ≥12h has elapsed;
-  missed windows are dropped (no catch-up).
-- **Expressive sprite set (REQ-015)** — `stretch` · `peek` · `tilt_head` ·
-  `shake` · `nuzzle` · `wiggle` · `dizzy` · `surprise`.
-
-Further out: Voice · Custom skins · Live2D / VRM · Git/test-runner watcher ·
-Local embedding memory search · Multiple pets. See [`PRD.md`](./PRD.md) §24.
+Further out: Voice (opt-in) · Custom skins · Live2D / VRM · Git/test-runner
+watcher · Local embedding memory search · Multiple pets · Wardrobe & growth
+stages. See [`PRD.md`](./PRD.md) §24 and §27.8.
 
 ---
 
@@ -213,8 +227,8 @@ sandbox.
 ### Run tests
 
 ```bash
-npm test                                 # 99 frontend simulation tests (vitest)
-cd src-tauri && cargo test --lib         # 41 backend tests (db, sandbox, llm, prompts)
+npm test                                 # 213 frontend simulation tests (vitest)
+cd src-tauri && cargo test --lib         # 79 backend tests (db, sandbox, llm, prompts)
 ```
 
 ### Type-check & build
@@ -234,9 +248,8 @@ improvements, and [`BACKLOG.md`](./BACKLOG.md) for deferred items.
 
 ## PRD coverage
 
-Every numbered requirement (REQ-001 … REQ-099) from [`PRD.md`](./PRD.md) is
-either implemented, in active development (REQ-015, REQ-070…076, REQ-094…099),
-or explicitly out-of-scope for the MVP. Highlights:
+Every numbered requirement (REQ-001 … REQ-113) from [`PRD.md`](./PRD.md) is
+either implemented or explicitly out-of-scope. Highlights:
 
 - ✅ Transparent always-on-top draggable overlay (REQ-001…005)
 - ✅ Idle / walk / sleep / jump / sit / look_cursor / celebrate / hide / run animations (REQ-010)
@@ -246,9 +259,13 @@ or explicitly out-of-scope for the MVP. Highlights:
 - ✅ Provider trait (`LlmProvider`) — Ollama default, swappable (REQ-040…044)
 - ✅ Short, mood-aware chat replies with graceful fallback (REQ-050…054)
 - ✅ SQLite + FTS5 memory store, recency × importance × confidence ranking (REQ-060…066)
-- ✅ Daily reflection (LLM optional; deterministic fallback) → `dreams/` (REQ-070…073)
+- ✅ Idle-triggered 12h status report, autonomous + deterministic fallback → `dreams/` (REQ-070…076)
 - ✅ Pet home folder with `inbox/`, `notes/`, `dreams/`, `exports/` (REQ-080…084)
 - ✅ Declarative skill manifests, no remote skill installation (REQ-090…093)
+- ✅ Behavior choreography with closed presets + closed bubble vocabulary (REQ-094…099)
+- ✅ v0.2 The Adorable Update — juice, quirks, snacks & favorite, greetings,
+  keepsakes, hatch-day, rituals, drag physics, stage backgrounds, sound toggle,
+  settings access, snack sprites, intensity guardrails (REQ-100…117, PRD §27)
 
 Out of scope for MVP (per PRD §4.2): voice, 3D/Live2D, browser automation,
 shell execution, cloud sync, marketplace plugins.

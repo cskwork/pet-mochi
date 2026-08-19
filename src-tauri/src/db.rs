@@ -177,6 +177,22 @@ impl Db {
     // ------- Pet state -------
     pub fn save_pet_state(&self, state: &PetState) -> AppResult<()> {
         let conn = self.conn.lock();
+        // REQ-102 — `last_report_at` is monotonic. The pet window's debounced
+        // save can carry a watermark that predates a report just written by
+        // `run_status_report` (e.g. triggered from the settings window); a
+        // blind overwrite would re-open the 12h cadence and duplicate reports.
+        // Keep whichever timestamp is newer; a present-but-unparseable side
+        // loses to a parseable one.
+        let existing_report_at: Option<String> = conn
+            .query_row(
+                "SELECT last_report_at FROM pet_state WHERE id = ?1",
+                params![state.id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
+        let last_report_at =
+            merge_last_report_at(existing_report_at, state.last_report_at.clone());
         conn.execute(
             "INSERT INTO pet_state (id, name, mood, hunger, energy, affection, boredom, curiosity, stress, trust, relationship_level, current_animation, current_intent, last_interaction_at, last_llm_call_at, last_report_at, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
@@ -213,7 +229,7 @@ impl Db {
                 state.current_intent,
                 state.last_interaction_at,
                 state.last_llm_call_at,
-                state.last_report_at,
+                last_report_at,
                 state.created_at,
                 state.updated_at,
             ],
@@ -640,6 +656,24 @@ impl Db {
 /// non-null type is expected). Connection-level / query-level errors are caught
 /// upstream by the `?` on `query_map`; only per-row decode failures are tolerated
 /// here. PRD §10.2: corrupt records must be ignored or repairable.
+/// REQ-102 — pick the newer of two `last_report_at` watermarks. `None` never
+/// beats `Some`; when both parse, the later instant wins; a side that fails
+/// to parse loses to one that parses (a stale-but-valid stamp is more useful
+/// than corrupt data). Timestamps are compared as parsed instants, not
+/// strings, because RFC3339 fractional-second precision varies.
+fn merge_last_report_at(existing: Option<String>, incoming: Option<String>) -> Option<String> {
+    match (existing, incoming) {
+        (None, incoming) => incoming,
+        (existing, None) => existing,
+        (Some(e), Some(i)) => match (parse_timestamp(&e), parse_timestamp(&i)) {
+            (Some(et), Some(it)) => Some(if it >= et { i } else { e }),
+            (None, Some(_)) => Some(i),
+            (Some(_), None) => Some(e),
+            (None, None) => Some(i),
+        },
+    }
+}
+
 fn collect_tolerant<I, T>(iter: I, table: &str) -> Vec<T>
 where
     I: IntoIterator<Item = rusqlite::Result<T>>,
@@ -774,6 +808,66 @@ mod tests {
         let loaded = db.load_pet_state("default").unwrap().unwrap();
         assert_eq!(loaded.name, "Mochi");
         assert_eq!(loaded.energy, 80);
+    }
+
+    /// REQ-102 — a debounced frontend save carrying a stale (older or null)
+    /// `last_report_at` must never roll back the newer watermark written by
+    /// `run_status_report`, possibly from another window.
+    #[test]
+    fn last_report_at_is_monotonic_on_save() {
+        let db = fresh();
+        let mut pet = PetState::new("Mochi");
+        pet.last_report_at = Some("2026-08-19T12:00:00+00:00".to_string());
+        db.save_pet_state(&pet).unwrap();
+
+        // An older watermark loses.
+        let mut stale = pet.clone();
+        stale.last_report_at = Some("2026-08-19T00:00:00+00:00".to_string());
+        db.save_pet_state(&stale).unwrap();
+        let loaded = db.load_pet_state("default").unwrap().unwrap();
+        assert_eq!(
+            loaded.last_report_at.as_deref(),
+            Some("2026-08-19T12:00:00+00:00")
+        );
+
+        // A null watermark loses.
+        let mut nulled = pet.clone();
+        nulled.last_report_at = None;
+        db.save_pet_state(&nulled).unwrap();
+        let loaded = db.load_pet_state("default").unwrap().unwrap();
+        assert_eq!(
+            loaded.last_report_at.as_deref(),
+            Some("2026-08-19T12:00:00+00:00")
+        );
+
+        // A newer watermark advances.
+        let mut newer = pet.clone();
+        newer.last_report_at = Some("2026-08-19T13:30:00+00:00".to_string());
+        db.save_pet_state(&newer).unwrap();
+        let loaded = db.load_pet_state("default").unwrap().unwrap();
+        assert_eq!(
+            loaded.last_report_at.as_deref(),
+            Some("2026-08-19T13:30:00+00:00")
+        );
+
+        // Other fields still follow the latest save (the guard is scoped to
+        // the watermark, not the whole row).
+        let mut hungry = newer.clone();
+        hungry.hunger = 77;
+        db.save_pet_state(&hungry).unwrap();
+        let loaded = db.load_pet_state("default").unwrap().unwrap();
+        assert_eq!(loaded.hunger, 77);
+    }
+
+    #[test]
+    fn merge_last_report_at_prefers_parseable_over_garbage() {
+        let newer = Some("2026-08-19T13:00:00+00:00".to_string());
+        let garbage = Some("not-a-timestamp".to_string());
+        assert_eq!(
+            merge_last_report_at(garbage.clone(), newer.clone()),
+            newer.clone()
+        );
+        assert_eq!(merge_last_report_at(newer.clone(), garbage), newer);
     }
 
     /// PRD §21.3 acceptance: `last_interaction_at` must survive a process
