@@ -1,6 +1,6 @@
 [package]
 name = "pet-mochi"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local-first AI digital pet — Mochi"
 authors = ["Pet Mochi"]
 license = "MIT"
