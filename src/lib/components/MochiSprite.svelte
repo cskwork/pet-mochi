@@ -53,6 +53,12 @@
     wiggle: "/sprites/mochi-wiggle.png",
     dizzy: "/sprites/mochi-dizzy.png",
     surprise: "/sprites/mochi-surprise.png",
+    // REQ-116 snack-specific eat frames (paired by the tray's step sequences,
+    // same bite/chew rhythm as eat/eat_2).
+    eat_strawberry: "/sprites/mochi-eat-strawberry-1.png",
+    eat_strawberry_2: "/sprites/mochi-eat-strawberry-2.png",
+    eat_cookie: "/sprites/mochi-eat-cookie-1.png",
+    eat_cookie_2: "/sprites/mochi-eat-cookie-2.png",
   };
 
   // Subtle CSS tint per mood so the same base PNG reads as a different state
@@ -96,6 +102,8 @@
 
   let scaleX = $derived(facing === "left" ? -1 : 1);
   let isAsleep = $derived(animation === "sleep");
+  // Covers eat/eat_2 and the REQ-116 snack-specific frames.
+  let isEating = $derived(animation.startsWith("eat"));
   let moodFilter = $derived(MOOD_FILTER[mood]);
 </script>
 
@@ -127,7 +135,7 @@
     <div class="mark mark-curious" aria-hidden="true">?</div>
   {/if}
 
-  {#if mood === "hungry" && !isAsleep && animation !== "eat" && animation !== "eat_2"}
+  {#if mood === "hungry" && !isAsleep && !isEating}
     <div class="mark mark-hungry" aria-hidden="true">🍡</div>
   {/if}
 
@@ -152,7 +160,7 @@
     <div class="mark mark-zzz" aria-hidden="true">~</div>
   {/if}
 
-  {#if animation === "eat" || animation === "eat_2"}
+  {#if isEating}
     <div class="mark mark-crumb" aria-hidden="true">·</div>
   {/if}
 </div>
@@ -204,7 +212,11 @@
 
   /* Munching = quick small vertical squash so the chew reads even on a still PNG. */
   .mochi[data-anim="eat"] .sprite,
-  .mochi[data-anim="eat_2"] .sprite {
+  .mochi[data-anim="eat_2"] .sprite,
+  .mochi[data-anim="eat_strawberry"] .sprite,
+  .mochi[data-anim="eat_strawberry_2"] .sprite,
+  .mochi[data-anim="eat_cookie"] .sprite,
+  .mochi[data-anim="eat_cookie_2"] .sprite {
     animation: chew 0.32s ease-in-out infinite;
   }
 
@@ -531,6 +543,10 @@
     .mochi[data-anim="celebrate"] .sprite,
     .mochi[data-anim="eat"] .sprite,
     .mochi[data-anim="eat_2"] .sprite,
+    .mochi[data-anim="eat_strawberry"] .sprite,
+    .mochi[data-anim="eat_strawberry_2"] .sprite,
+    .mochi[data-anim="eat_cookie"] .sprite,
+    .mochi[data-anim="eat_cookie_2"] .sprite,
     .mochi[data-anim="yawn"] .sprite,
     .mochi[data-anim="roll"] .sprite,
     .mochi[data-anim="blush"] .sprite,

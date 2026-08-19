@@ -39,7 +39,13 @@ export type MovementState =
   | "nuzzle"
   | "wiggle"
   | "dizzy"
-  | "surprise";
+  | "surprise"
+  // REQ-116 snack-specific eat frames — the tray (REQ-107) shows the snack
+  // the user actually picked instead of always the dango skewer.
+  | "eat_strawberry"
+  | "eat_strawberry_2"
+  | "eat_cookie"
+  | "eat_cookie_2";
 
 export type PetState = {
   id: string;
