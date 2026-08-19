@@ -11,7 +11,7 @@ optional local LLM. Works fully offline. No accounts. No cloud. No telemetry.
 [![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)](https://tauri.app)
 [![Svelte 5](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte&logoColor=white)](https://svelte.dev)
 [![Rust](https://img.shields.io/badge/Rust-1.77+-orange?logo=rust&logoColor=white)](https://www.rust-lang.org)
-[![Tests](https://img.shields.io/badge/tests-291%20passing-brightgreen)](#run-tests)
+[![Tests](https://img.shields.io/badge/tests-292%20passing-brightgreen)](#run-tests)
 
 <img src="public/sprites/mochi-celebrate.png" width="200" alt="Mochi celebrating" />
 
@@ -110,8 +110,9 @@ core experience.
 - **Pick your stage** — fully transparent desktop overlay by default, or a
   soft themed card (cream / blossom / mint / night) from Settings, applied
   live.
-- **Right-click → Settings… / Close Mochi** — a tiny context menu since the
-  overlay window is frameless.
+- **Settings, two ways in** — a small ⚙ in the opened status panel, or
+  right-click → Settings… (the same menu also has Close Mochi, since the
+  overlay window is frameless).
 - **Persistent memories** — durable preferences and recurring context survive
   restarts. Review, export, or delete from Settings.
 - **12h idle-triggered status reports** — fires autonomously when ≥12h has
@@ -226,7 +227,7 @@ sandbox.
 ### Run tests
 
 ```bash
-npm test                                 # 212 frontend simulation tests (vitest)
+npm test                                 # 213 frontend simulation tests (vitest)
 cd src-tauri && cargo test --lib         # 79 backend tests (db, sandbox, llm, prompts)
 ```
 

@@ -76,7 +76,13 @@ export function sfxNotes(kind: SfxKind): SfxNote[] {
         { freqHz: 659, startMs: 120, durMs: 240, gain: 0.09, type: "sine" },
       ];
     case "pop":
-      return [{ freqHz: 660, startMs: 0, durMs: 35, gain: 0.06, type: "square" }];
+      // Gentle upward "plip" — sine only. The first cut used a 35ms square
+      // wave, which reads as a harsh electronic tick; no square waves remain
+      // anywhere in the palette.
+      return [
+        { freqHz: 523, startMs: 0, durMs: 45, gain: 0.04, type: "sine" },
+        { freqHz: 784, startMs: 50, durMs: 70, gain: 0.05, type: "sine" },
+      ];
   }
 }
 

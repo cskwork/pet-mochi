@@ -325,7 +325,7 @@
           Allow autonomous chat bubbles
         </label>
         <label class="row">
-          <input type="checkbox" bind:checked={settings.soundEffects} />
+          <input type="checkbox" bind:checked={settings.soundEffects} onchange={save} />
           Sound effects (tiny chirps on feed/pat/play — Mochi never beeps on her own)
         </label>
         <label class="row">
@@ -348,18 +348,20 @@
             max="1.5"
             step="0.1"
             bind:value={settings.animationIntensity}
+            onchange={save}
           />
           <span>{settings.animationIntensity.toFixed(1)}× {settings.animationIntensity === 0 ? "(particles & quirks off)" : ""}</span>
         </label>
         <label>
           Stage background
-          <select bind:value={settings.stageBackground}>
+          <select bind:value={settings.stageBackground} onchange={save}>
             <option value="transparent">Fully transparent (desktop overlay)</option>
             <option value="cream">Cream card</option>
             <option value="blossom">Blossom pink</option>
             <option value="mint">Mint</option>
             <option value="night">Night</option>
           </select>
+          <span class="hint">Applies to the pet window immediately.</span>
         </label>
         <label>
           Pet home folder

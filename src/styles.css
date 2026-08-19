@@ -71,9 +71,19 @@ select:focus-visible {
   outline-offset: 2px;
 }
 
-/* Settings panel uses an opaque page background */
+/* Settings panel uses an opaque page background. The global overflow:hidden
+   above is for the pet overlay; the settings window has real content that can
+   exceed the viewport, so the body becomes a fixed-height scroll container
+   (html stays overflow:hidden, so body must own the scrolling) (REQ-115). */
 body.settings-page {
   background: var(--mochi-cream);
+  height: 100vh;
+  overflow-y: auto;
+}
+
+body.settings-page #app {
+  height: auto;
+  min-height: 100vh;
 }
 
 body.settings-page,

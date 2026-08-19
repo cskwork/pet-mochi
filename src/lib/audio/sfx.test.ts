@@ -55,4 +55,14 @@ describe("REQ-117 sound-effect note tables", () => {
   it("is deterministic", () => {
     expect(sfxNotes("sparkle")).toEqual(sfxNotes("sparkle"));
   });
+
+  // User feedback: a short square wave reads as a harsh electronic tick.
+  // Only soft waveforms are allowed in the palette.
+  it("never uses square or sawtooth waveforms", () => {
+    for (const kind of KINDS) {
+      for (const note of sfxNotes(kind)) {
+        expect(["sine", "triangle"], `${kind} uses ${note.type}`).toContain(note.type);
+      }
+    }
+  });
 });
