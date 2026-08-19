@@ -1363,11 +1363,16 @@ applies live to the pet window via the `settings:changed` broadcast, and
 the backend clamps the value to the closed list so arbitrary strings never
 reach the DOM. Unknown or legacy-missing values fall back to transparent.
 
-**REQ-115:** Settings must be reachable from the pet: the right-click
-context menu gains a "Settings…" item that shows the settings window
-(created hidden at startup; closing it hides rather than destroys it so it
-can always be reopened). The settings view refreshes its data when the
-window regains focus.
+**REQ-115:** Settings must be reachable from the pet — discoverably: a
+small ⚙ button at the bottom-right of the opened status panel AND a
+"Settings…" item in the right-click context menu both show the settings
+window (created hidden at startup; closing it hides rather than destroys
+it so it can always be reopened). The settings view refreshes its data
+when the window regains focus, its content scrolls when it exceeds the
+window height, and the live-applied fields (stage background, sound,
+intensity) save on change — no separate Save press needed for them. On
+macOS the transparent overlay requires `macOSPrivateApi` (enabled; rules
+out Mac App Store distribution, which this project does not target).
 
 **REQ-116:** Snack-specific eat frames: feeding a snack from the tray must
 show that snack in the pet's paws — dedicated bite/chew sprite pairs for

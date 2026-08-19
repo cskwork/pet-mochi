@@ -1578,7 +1578,14 @@
   {/if}
 
   <div class="status-anchor">
-    <PetStatus {pet} {saving} open={statusOpen} onToggle={toggleStatus} {flashedStat} />
+    <PetStatus
+      {pet}
+      {saving}
+      open={statusOpen}
+      onToggle={toggleStatus}
+      {flashedStat}
+      onOpenSettings={openSettingsWindow}
+    />
   </div>
 
   <div class="actions-anchor">

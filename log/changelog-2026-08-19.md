@@ -102,6 +102,27 @@ for the research summary and sources.
   `settings:changed`; lazy AudioContext for autoplay policies; audio
   failures are swallowed.
 
+## Live-feedback fixes (user desktop session)
+
+- **macOS transparency was actually off** — the dev log showed
+  "transparent but `macos-private-api` is not enabled": on macOS the
+  overlay rendered on an opaque white canvas, which also made stage
+  backgrounds look like no-ops. Enabled `app.macOSPrivateApi` (rules out
+  Mac App Store distribution; not a target).
+- **Settings discoverability, round 2** — replaced the top-right gear chip
+  with a smaller ⚙ at the bottom-right of the opened status panel (per
+  request); the right-click "Settings…" item stays.
+- **Instant apply** — stage background, sound toggle, and animation
+  intensity now save on change (select/checkbox/slider `onchange` → save →
+  `settings:changed`), so the pet window updates immediately instead of
+  waiting for a Save press.
+- **Settings window scroll** — the global `overflow: hidden` (needed by the
+  overlay) also clipped the settings page; `body.settings-page` is now a
+  fixed-height scroll container.
+- **Softer tray sound** — the Feed-click "pop" was a 35ms square wave that
+  read as a harsh electronic tick; replaced with a two-note sine "plip" and
+  added a test forbidding square/sawtooth anywhere in the palette.
+
 ## Post-review fixes (code-reviewer subagent pass)
 
 - **CRITICAL** — the REQ-070 idle window required literal `idle` for 60s, but
