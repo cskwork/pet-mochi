@@ -1,8 +1,8 @@
 # PRD: Local-First AI Digital Pet MVP
 
-**Version:** 0.1  
-**Date:** 2026-05-03  
-**Status:** Draft for implementation  
+**Version:** 0.2  
+**Date:** 2026-08-19 (v0.1: 2026-05-03)  
+**Status:** v0.1 (§1–§26) shipped · v0.2 "The Adorable Update" (§27) in implementation  
 **Working name:** Digital Pet MVP  
 **Product type:** Local-first desktop AI companion / digital pet  
 
@@ -234,7 +234,7 @@ When the user drops a `.txt`, `.md`, or `.json` file into the pet inbox:
 
 ### 7.7 Idle-Triggered Status Report
 
-Roughly every 12 hours, during an idle window (pet is in `idle` or `sleep`, no active action sequence), Mochi compiles a short status report covering the previous 12-hour window:
+Roughly every 12 hours, during an idle window (pet is in a calm resting pose — `idle`/`sit`/`look_cursor`/`sleep` — with no active action sequence), Mochi compiles a short status report covering the previous 12-hour window:
 
 - one thing it learned
 - one thing it noticed about the user
@@ -361,7 +361,7 @@ The cadence is *not* a fixed clock — if the computer was off, the next idle wi
 
 ### 9.8 Idle-Triggered Status Report
 
-**REQ-070:** The app must generate a status report when at least 12 hours have elapsed since `lastReportAt` AND the simulation has been in an idle window (`idle`/`sleep` movement, no in-flight action) for at least 60 seconds.  
+**REQ-070:** The app must generate a status report when at least 12 hours have elapsed since `lastReportAt` AND the simulation has been in an idle window for at least 60 seconds. The idle window means a calm resting pose (`idle`/`sit`/`look_cursor`/`sleep`) with no in-flight action — the movement engine re-rolls among the calm poses every tick, so requiring literal `idle` for 60s would make the gate unreachable.  
 **REQ-071:** Reports must be saved in `pet_home/dreams/` as `YYYY-MM-DD-HHMM.md`.  
 **REQ-072:** Reports must be short and structured: a `{learned, noticed, wants}` triple plus a 200–400 character prose paragraph interpreting the 12h window.  
 **REQ-073:** Report generation must not run continuously in the background — only fire when (12h elapsed) AND (idle window) are both true.  
@@ -1185,3 +1185,205 @@ The MVP is not a full AI agent. It is not a chatbot with a mascot. It is a local
 The final MVP should be summarized as:
 
 > A performant local-first desktop pet that moves independently, remembers useful context, talks briefly through an optional LLM, and performs small permissioned actions inside a safe sandbox folder.
+
+---
+
+## 27. v0.2 — The Adorable Update (Cuteness & Attachment)
+
+**Goal:** Mochi should be the kind of pet you keep coming back to poke, feed,
+and play with. The assistant features (notes, reports, file summaries) already
+exist; v0.2 makes the *creature* irresistible. Every feature in this section
+must work fully — end to end, tested, and within the performance budget —
+before the next one starts.
+
+### 27.1 Research basis
+
+Findings from virtual-pet and desktop-pet product research (2026-08):
+
+1. **Attachment comes from the care loop, not features.** The "Tamagotchi
+   effect" is animism: we bond with things that need us and *visibly respond*
+   to care. An unmet need is an open loop that pulls the user back.
+2. **Kindness retains better than guilt.** Finch's never-dies, never-shames
+   bird out-retains streak-pressure designs. Celebrate the return; never
+   catastrophize the lapse. Neko Atsume retains with zero notifications —
+   pull, never push.
+3. **Gifts, mementos, and preferences are the strongest attachment hooks.**
+   Neko Atsume mementos and Animal Crossing gift preferences work because the
+   pet *remembers and reflects you back*.
+4. **"Alive" = constrained randomness + reacting to the user's world.**
+   Petz-style bounded randomness keeps personality consistent but
+   non-repetitive; Shimeji-style tactile dragging and Bongo-Cat-style
+   activity reaction are the desktop-specific delights.
+5. **Cuteness is physical: baby schema + juice.** Squash-and-stretch,
+   particles, easing, and idle micro-fidgets transform flat sprites into
+   creatures.
+6. **Anti-features kill desktop pets:** CPU drag, focus stealing, forced
+   sound, guilt-tripping, blocking clicks. The design contract:
+   *communicate the attention the pet requires, and honor it.*
+
+### 27.2 v0.2 design principles
+
+1. **Kind, never needy.** No guilt copy, no punishment mechanics, no
+   notifications. Absence is greeted with joy, not reproach.
+2. **Quiet by default.** No sound of any kind in v0.2. No focus stealing.
+   Self-initiated behavior stays inside the existing cooldown budgets.
+3. **Deterministic first.** Every v0.2 feature works fully with the LLM off.
+   The LLM only garnishes (closed-vocabulary bubbles via §9.11).
+4. **Performance ceiling is a feature.** No new persistent timers — new
+   behavior piggybacks on the existing 3s sim tick, 80ms hit-test poll, and
+   sprite frame cycler. All new visuals animate `transform`/`opacity` only.
+5. **Accessible.** New interactive elements are keyboard-reachable and
+   labeled; decorative visuals are `aria-hidden`; `prefers-reduced-motion`
+   suppresses decorative motion.
+
+### 27.3 Foundation — dormant systems must actually run
+
+Audit finding: the §9.11 choreography engine, the REQ-015 expressive sprites,
+and the §9.8 report gate all shipped as code but are unreachable or invisible
+at runtime. v0.2 starts by making shipped features real.
+
+**REQ-100:** Every REQ-015 expressive pose (`stretch`, `peek`, `tilt_head`,
+`shake`, `nuzzle`, `wiggle`, `dizzy`, `surprise`) must have visible CSS
+motion (transform-only keyframes) so the pose reads as movement, not a still.
+All eight must be added to the `prefers-reduced-motion` suppression list.
+
+**REQ-101:** Choreography (§9.11) must be reachable in normal use: the
+frontend must dispatch `APP_STARTED`, `FILE_FOUND_IN_INBOX`, and
+`FILE_INSPECTION_APPROVED` through the event bus, and the pet must react
+visibly to them — via the LLM path when the salience gate passes, via the
+deterministic fallback preset otherwise. Existing cooldowns (90s shared LLM,
+30s local choreography) remain enforced. Backend event logging must not be
+lost in the rewiring.
+
+**REQ-102:** The §9.8 status report must fire autonomously: the tick loop
+tracks how long the pet has been in an idle window, evaluates
+`shouldFireStatusReport` each tick, and calls `run_status_report` when the
+gate opens. After success, `lastReportAt` must be mirrored into frontend
+state so the debounced save cannot roll it back. A failed attempt must back
+off ≥10 minutes. Generation stays silent (REQ-073).
+
+**REQ-103:** Click-through integrity: the window capability set must include
+`core:window:allow-set-ignore-cursor-events`. (Audit: the permission is
+missing, so every `setIgnoreCursorEvents` call fails silently and the
+overlay blocks a 360×360 region of the desktop, violating REQ-005.)
+
+### 27.4 Juice — the feel-alive layer
+
+**REQ-104:** Squash-and-stretch interaction juice: pressing the pet squishes
+it down (~90ms), releasing/acting plays a spring-back "boing" (~320ms).
+Transform-only, `transform-origin: bottom center`, suppressed under
+reduced motion.
+
+**REQ-105:** Particle bursts must accompany care moments: pat → floating
+hearts, feed → crumbs + sparkle, play → confetti dots, rest → drifting 💤,
+favorite-snack and welcome-back moments → bigger heart bursts. Constraints:
+deterministic specs from an injectable RNG, hard cap of 12 concurrent
+particle nodes, self-removing DOM nodes (`animationend`), `aria-hidden`,
+`pointer-events: none`, counts scaled by the `animationIntensity` setting,
+fully suppressed under reduced motion or intensity 0.
+
+**REQ-106:** Idle micro-quirks: when the pet is idle (`idle`/`sit`/
+`look_cursor`), unhurried (no action/choreography mid-play), and a ≥45s
+quirk cooldown has passed, it occasionally (probabilistic per tick, seeded
+RNG injectable) plays a short 1–3 beat quirk chain composed from existing
+poses. Pools are mood-weighted (e.g. tired → yawn/stretch, curious →
+tilt_head/peek, lonely → peek around). Quirks never interrupt actions and
+never fire while sleeping. Quirks must yield while a status report is due
+(12h elapsed) — their ~1/minute cadence would otherwise keep resetting the
+60-second idle window REQ-070 requires.
+
+### 27.5 Care loop — being known
+
+**REQ-107:** Snack picker + favorite-snack discovery: the Feed action opens
+a 3-snack tray (🍓 strawberry, 🍡 dango, 🍪 cookie). Each pet has a hidden,
+stable favorite derived deterministically from its identity. Feeding the
+favorite for the first time is a discovery moment: special eat→blush
+sequence, double-heart burst, a durable memory (`create_memory`) recording
+the favorite, and a special bubble. Later favorite feeds give a small
+affection bonus (+2) and hearts. The tray closes on pick/Escape/timeout,
+participates in click-through hit testing, and is keyboard-accessible.
+Without a backend (browser preview) the feature still works in-session,
+minus the durable memory.
+
+**REQ-108:** Tiered welcome-back ritual: on the `USER_RETURNED` edge the pet
+must *immediately* play a deterministic greeting, LLM or not — tiers by
+absence: 30m–2h warm greet; 2h–8h delight burst + hearts; >8h sleepy peek →
+surprise → celebrate + hearts. Bubble text comes from a curated kind pool;
+guilt copy ("finally", "you left me", …) is forbidden and enforced by test.
+The existing LLM `autonomous_speak` path may add a line afterwards; the
+ritual must not wait for the network.
+
+**REQ-109:** Keepsake gifts + shelf: after sustained good care (affection
+≥ 70 AND trust ≥ 55 at evaluation time) and ≥ 20h since the last keepsake,
+Mochi leaves exactly one trinket — a deterministic pick from a 12-item
+emoji table seeded by (pet id, date) — presented with a delight choreography
+and a "for you ♡" bubble, and stored as a durable memory of type
+`keepsake` via the existing `create_memory` command. Settings → Memory
+gains a "Keepsake shelf" grid rendering collected trinkets with dates.
+Evaluated at most once per 10 minutes on the tick; disabled without a
+backend.
+
+**REQ-110:** Hatch-day: on the month+day anniversary of `createdAt` the pet
+celebrates once per year (deduped via a durable memory row): confetti
+burst + delight choreography + special bubble + memory. On the same
+day-of-month in other months a small heart burst plays at most once per
+session, with no persistence.
+
+### 27.6 Rhythm & touch
+
+**REQ-111:** Time-of-day rituals: the tick loop must detect period
+transitions (morning/afternoon/evening/night) and dispatch
+`TIME_OF_DAY_CHANGED`. Transitions play a deterministic ritual when the pet
+is unhurried: morning → stretch + wiggle (+ greeting bubble), evening →
+yawn + settle, night → sleepy settle (skipped if already asleep). At most
+one ritual per transition.
+
+**REQ-112:** Drag dangle & landing: while the OS window drag is in
+progress the pet shows a "grabbed" pose (`surprise`). When the drop is
+detected (window position stops changing, sampled by the existing 80ms
+hit-test poll — no new timers), a landing beat plays: a squash-bounce
+normally, plus a brief dizzy → shake recovery when the drag displacement
+exceeded 200 logical px. Thresholds live in a pure, tested function.
+
+**REQ-113:** Guardrails (applies to all of §27): the `animationIntensity`
+setting (0–1.5) scales particle counts and quirk frequency; 0 disables
+both. Settings changes propagate live to the pet window via a
+`settings:changed` event. No new `setInterval`/`setTimeout` loops beyond
+the existing tick / hit-test / frame-cycle timers (one-shot timers for
+animation sequencing are fine). No sound. No focus stealing. All new
+visuals are `transform`/`opacity` only.
+
+### 27.7 Acceptance criteria (v0.2)
+
+1. All four checks pass: `npm test`, `npm run check` (0/0),
+   `cargo test --lib`, `cargo build`.
+2. With Ollama stopped, a fresh launch shows: wake-up motion, expressive
+   poses that visibly move, snack tray feeding, particles, idle quirks
+   within ~2 minutes, and (when thresholds are met) nudges — all offline.
+3. Clicking through the transparent region of the overlay reaches the
+   desktop behind it (REQ-103).
+4. Returning after >30 min away triggers the greeting ritual immediately,
+   without waiting for the LLM.
+5. `prefers-reduced-motion` suppresses decorative motion and particles.
+6. No new persistent timers (code inspection), idle CPU within §10.1.
+
+### 27.8 Explicitly out of scope for v0.2 (and why)
+
+1. **Cursor chasing / sleeping under the cursor across the screen** — needs
+   global cursor tracking + programmatic window moves; platform-specific
+   and easy to make annoying. Revisit with a dedicated design.
+2. **Typing-rhythm reactions (Bongo Cat mode)** — requires global input
+   listening; a privacy surface we refuse for now (§10.4 spirit).
+3. **Window-edge perching** — needs per-platform window enumeration APIs.
+4. **Sound** — top uninstall complaint for desktop pets; would need an
+   opt-in design pass first.
+5. **Wardrobe, growth stages, care-streak candle** — need new art or
+   deeper persistence; queued behind v0.2 validation.
+6. **Multiple pets, Live2D/VRM, voice** — unchanged from §4.2.
+
+### 27.9 Implementation order
+
+Foundation (REQ-103 → 100 → 101 → 102) → Juice (REQ-104 → 105 → 106) →
+Care loop (REQ-107 → 108 → 109 → 110) → Rhythm & touch (REQ-111 → 112) →
+Guardrails pass (REQ-113). Each step lands with unit tests for its pure
+logic and a full check run before the next step starts.
