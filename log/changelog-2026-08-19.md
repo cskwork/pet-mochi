@@ -123,6 +123,16 @@ for the research summary and sources.
   read as a harsh electronic tick; replaced with a two-note sine "plip" and
   added a test forbidding square/sawtooth anywhere in the palette.
 
+## Sprite background sweep (user report: "sometimes white background")
+
+- A full-alpha scan of `public/sprites/` found all 8 REQ-015 expressive
+  poses (stretch/peek/tilt-head/shake/nuzzle/wiggle/dizzy/surprise) shipped
+  with fully opaque backgrounds — they had never gone through strip-bg, and
+  v0.2 is the first release where they actually appear on screen (quirks,
+  choreography, greetings, drag), which is exactly when the white square
+  showed. Stripped via the same corner-detect + flood-fill pipeline;
+  re-scan reports 0 problem files across all 28 sprites.
+
 ## Post-review fixes (code-reviewer subagent pass)
 
 - **CRITICAL** — the REQ-070 idle window required literal `idle` for 60s, but
