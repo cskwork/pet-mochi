@@ -4,7 +4,11 @@
  * tauri is not present.
  */
 import { invoke as rawInvoke } from "@tauri-apps/api/core";
-import { listen as rawListen, type UnlistenFn } from "@tauri-apps/api/event";
+import {
+  emit as rawEmit,
+  listen as rawListen,
+  type UnlistenFn,
+} from "@tauri-apps/api/event";
 
 const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -23,6 +27,12 @@ export async function listen<T>(
     return async () => {};
   }
   return rawListen<T>(event, (e) => handler(e.payload));
+}
+
+/** Cross-window broadcast (e.g. settings → pet overlay). No-op outside Tauri. */
+export async function emit(event: string, payload?: unknown): Promise<void> {
+  if (!inTauri) return;
+  return rawEmit(event, payload);
 }
 
 export const isTauri = inTauri;

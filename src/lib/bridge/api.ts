@@ -29,6 +29,11 @@ export type Settings = {
   startOnLogin: boolean;
   petHomePath?: string | null;
   developerEventLog: boolean;
+  /** Stage background behind the pet (REQ-114): "transparent" or a themed
+   *  card ("cream" | "blossom" | "mint" | "night"). */
+  stageBackground: string;
+  /** Synth sound effects for user-initiated actions (REQ-117). */
+  soundEffects: boolean;
   /** Read-only: true if a cloud API key is on disk. The key value is never returned. */
   cloudApiKeySet: boolean;
 };
@@ -104,6 +109,8 @@ export const api = {
   getPetState: () => invoke<PetState>("get_pet_state"),
   savePetState: (pet: PetState) => invoke<PetState>("save_pet_state", { pet }),
   quitApp: () => invoke<void>("quit_app"),
+  /** REQ-115 — show the (hidden) settings window from the context menu. */
+  openSettings: () => invoke<void>("open_settings"),
 
   getSettings: () => invoke<Settings>("get_settings"),
   saveSettings: (settings: Settings) => invoke<Settings>("save_settings", { settings }),
