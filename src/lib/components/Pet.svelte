@@ -62,6 +62,7 @@
   } from "../sim";
   import { api } from "../bridge/api";
   import { listen } from "../bridge/tauri";
+  import { disposeSfx, playSfx, setSfxEnabled } from "../audio/sfx";
   import { eventBus } from "../events/bus";
   import { tryEnterAutonomous, type LastAutonomous } from "./autonomousGate";
   import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
@@ -533,6 +534,7 @@
   // ===== REQ-107 snack tray =====
   function openSnackTray() {
     snackTrayOpen = true;
+    playSfx("pop");
     if (snackTrayTimer) clearTimeout(snackTrayTimer);
     snackTrayTimer = setTimeout(() => {
       snackTrayOpen = false;
@@ -563,6 +565,7 @@
     playSteps(result.steps);
     triggerBoing();
     spawnBurst(result.favoriteDiscovered ? "hearts_big" : "crumbs");
+    playSfx(result.favoriteDiscovered ? "sparkle" : "nom");
     flashedStat = null;
     if (flashStatTimer) clearTimeout(flashStatTimer);
     queueMicrotask(() => {
@@ -609,6 +612,7 @@
         playSteps(CHOREOGRAPHY_CATALOG.delight_burst.variants[0]);
       }
       spawnBurst("confetti");
+      playSfx("sparkle");
       flashBubble(keepsakeBubble(pet.name, trinket), 5_000);
     } catch {
       // Backend hiccup — roll back the stamp so the 10-minute check retries.
@@ -633,6 +637,7 @@
           .catch(() => undefined);
         playSteps(CHOREOGRAPHY_CATALOG.delight_burst.variants[0]);
         spawnBurst("confetti");
+        playSfx("chime");
         flashBubble(hatchdayBubble(pet.name, status.ageYears), 6_000);
       })();
     } else if (status.monthly && !monthlyHeartsCelebrated) {
@@ -820,6 +825,14 @@
     rest: "sleep",
   };
 
+  // Which chirp goes with each action (REQ-117). User-initiated only —
+  // autonomous behaviors never make sound.
+  const ACTION_TO_SFX = {
+    pet: "boop",
+    play: "bounce",
+    rest: "settle",
+  } as const;
+
   async function onAction(key: ActionKey) {
     if (busyAction === key) return;
     // REQ-107 — Feed opens the snack tray instead of feeding immediately;
@@ -842,6 +855,8 @@
     triggerBoing();
     const burst = ACTION_TO_BURST[key];
     if (burst) spawnBurst(burst);
+    const sound = key in ACTION_TO_SFX ? ACTION_TO_SFX[key as keyof typeof ACTION_TO_SFX] : null;
+    if (sound) playSfx(sound);
     // Pulse the affected gauge so the user sees the action register, even
     // if the stat was already at its cap.
     const statKey = ACTION_TO_STAT[key];
@@ -987,7 +1002,8 @@
   let menuOpen = $state(false);
   let menuPos = $state({ x: 0, y: 0 });
   const MENU_W = 140;
-  const MENU_H = 40;
+  // Two items now: Settings… + Close Mochi (REQ-115).
+  const MENU_H = 76;
 
   function openContextMenu(e: MouseEvent) {
     e.preventDefault();
@@ -1009,6 +1025,21 @@
     } catch (err) {
       console.warn("quit_app failed", err);
       flashBubble("(couldn't quit)", 3_000);
+    }
+  }
+
+  /** REQ-115 — the frameless overlay's only path to the settings window. */
+  async function openSettingsWindow() {
+    closeContextMenu();
+    if (!api.hasBackend) {
+      flashBubble(`${pet.name}: ✨ (settings only work in the desktop app)`, 3_000);
+      return;
+    }
+    try {
+      await api.openSettings();
+    } catch (err) {
+      console.warn("open_settings failed", err);
+      flashBubble("(couldn't open settings)", 3_000);
     }
   }
 
@@ -1300,25 +1331,30 @@
       reducedMotionQuery.removeEventListener("change", onReducedMotionChange);
 
     if (api.hasBackend) {
-      // REQ-113/114 — load animation intensity + stage background and follow
-      // live changes from the settings window.
+      // REQ-113/114/117 — load animation intensity, stage background, and the
+      // sound toggle; follow live changes from the settings window.
       try {
         const settings = await api.getSettings();
         animationIntensity = clampIntensity(settings.animationIntensity);
         applyStageBackground(settings.stageBackground);
+        setSfxEnabled(settings.soundEffects);
       } catch {
-        // Defaults stay: intensity 1, transparent stage.
+        // Defaults stay: intensity 1, transparent stage, sounds on.
       }
       try {
         unlistenSettings = await listen<{
           animationIntensity?: number;
           stageBackground?: string;
+          soundEffects?: boolean;
         }>("settings:changed", (payload) => {
           if (payload && typeof payload.animationIntensity === "number") {
             animationIntensity = clampIntensity(payload.animationIntensity);
           }
           if (payload && "stageBackground" in payload) {
             applyStageBackground(payload.stageBackground);
+          }
+          if (payload && typeof payload.soundEffects === "boolean") {
+            setSfxEnabled(payload.soundEffects);
           }
         });
       } catch {
@@ -1368,6 +1404,8 @@
           playSteps(greeting.steps);
           flashBubble(`${pet.name}: ${greeting.bubble}`, 4_000);
           if (greeting.burst) spawnBurst(greeting.burst);
+          // The user just came back — a welcome counts as user-initiated.
+          playSfx("chime");
         }
         if (api.hasBackend) {
           void maybeAutonomousSpeak("returned", event.awayMinutes);
@@ -1444,6 +1482,7 @@
     if (unsubscribeBus) unsubscribeBus();
     if (reducedMotionCleanup) reducedMotionCleanup();
     delete document.body.dataset.stageBackground;
+    disposeSfx();
     // Restore non-click-through state so a future window reuse isn't stuck.
     if (api.hasBackend) {
       getCurrentWindow().setIgnoreCursorEvents(false).catch(() => undefined);
@@ -1567,6 +1606,9 @@
       tabindex="-1"
       onkeydown={onMenuKey}
     >
+      <button type="button" role="menuitem" class="menu-item" onclick={openSettingsWindow}>
+        Settings…
+      </button>
       <button type="button" role="menuitem" class="menu-item" onclick={quitApp}>
         Close Mochi
       </button>

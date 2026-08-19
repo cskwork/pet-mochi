@@ -71,6 +71,23 @@ pub fn quit_app(app: tauri::AppHandle) {
     app.exit(0);
 }
 
+/// REQ-115 — show the settings window. It is declared `visible: false` in
+/// tauri.conf.json and hidden-on-close (see lib.rs), so the pet's context
+/// menu is the one and only way users reach Settings.
+#[tauri::command]
+pub fn open_settings(app: tauri::AppHandle) -> AppResult<()> {
+    use tauri::Manager;
+    let window = app
+        .get_webview_window("settings")
+        .ok_or_else(|| AppError::NotFound("settings window".to_string()))?;
+    window
+        .show()
+        .map_err(|e| AppError::Internal(format!("show settings window: {e}")))?;
+    let _ = window.unminimize();
+    let _ = window.set_focus();
+    Ok(())
+}
+
 // ============== Settings (secrets handled separately) ==============
 
 #[tauri::command]

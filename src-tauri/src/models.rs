@@ -193,6 +193,11 @@ pub struct Settings {
     /// settings blobs persisted before v0.2 still deserialize.
     #[serde(default = "default_stage_background")]
     pub stage_background: String,
+    /// Sound effects (PRD §27.6 REQ-117). Synth-only chirps for
+    /// user-initiated actions; autonomous behaviors always stay silent.
+    /// Defaulted so pre-v0.2 settings blobs still deserialize.
+    #[serde(default = "default_true")]
+    pub sound_effects: bool,
     /// Read-only flag: true if a cloud API key is on disk. Never carries the key value.
     #[serde(default)]
     pub cloud_api_key_set: bool,
@@ -203,6 +208,10 @@ pub const STAGE_BACKGROUNDS: [&str; 5] = ["transparent", "cream", "blossom", "mi
 
 fn default_stage_background() -> String {
     "transparent".to_string()
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// Clamp a requested stage background to the closed list (REQ-114).
@@ -231,6 +240,7 @@ impl Default for Settings {
             pet_home_path: None,
             developer_event_log: false,
             stage_background: default_stage_background(),
+            sound_effects: true,
             cloud_api_key_set: false,
         }
     }
@@ -299,13 +309,14 @@ pub fn endpoint_is_loopback(endpoint: &str) -> bool {
 mod model_tests {
     use super::{endpoint_is_loopback, normalize_stage_background, Settings};
 
-    /// REQ-114 — settings blobs persisted before the field existed must still
-    /// deserialize, defaulting to the transparent overlay.
+    /// REQ-114/117 — settings blobs persisted before the fields existed must
+    /// still deserialize, defaulting to the transparent overlay and sounds on.
     #[test]
-    fn settings_legacy_json_defaults_stage_background() {
+    fn settings_legacy_json_defaults_new_fields() {
         let legacy = r#"{"petName":"Mochi","personalityPreset":"curious","llmProvider":"ollama","ollamaEndpoint":"http://localhost:11434","ollamaModel":"gemma4:e2b","localOnlyMode":true,"autonomousSpeech":true,"memoryEnabled":true,"animationIntensity":1.0,"alwaysOnTop":true,"startOnLogin":false,"petHomePath":null,"developerEventLog":false}"#;
         let s: Settings = serde_json::from_str(legacy).unwrap();
         assert_eq!(s.stage_background, "transparent");
+        assert!(s.sound_effects);
     }
 
     #[test]
