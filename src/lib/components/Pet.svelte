@@ -18,20 +18,51 @@
     newNudgeState,
     roundStats,
     shouldCallLLM,
+    shouldFireStatusReport,
+    STATUS_REPORT_GATE_CONSTANTS,
     pickFallbackPreset,
     stepsForPick,
     validateChoreographyPayload,
+    nextQuirk,
+    particleSpecsFor,
+    MAX_LIVE_PARTICLES,
+    applySnackFeed,
+    isFavoriteDiscoveredInMemories,
+    SNACK_KEYS,
+    SNACKS,
+    greetingForReturn,
+    canLeaveKeepsake,
+    pickTrinket,
+    keepsakeMemoryContent,
+    keepsakeBubble,
+    lastKeepsakeAt,
+    KEEPSAKE_MEMORY_TYPE,
+    hatchdayStatus,
+    hasCelebratedHatchdayThisYear,
+    hatchdayMemoryContent,
+    hatchdayBubble,
+    HATCHDAY_MEMORY_TYPE,
+    ritualForTransition,
+    landingSteps,
+    GRAB_ANIMATION,
+    LANDING_STABLE_SAMPLES,
+    CHOREOGRAPHY_CATALOG,
     type ActionKey,
     type AnimationStep,
     type ChoreographyPick,
     type NudgeState,
     type Obstacle,
+    type ParticleKind,
+    type ParticleSpec,
+    type Period,
     type PetEvent,
     type PetState,
     type RuntimeContext,
+    type SnackKey,
   } from "../sim";
   import { api } from "../bridge/api";
   import { listen } from "../bridge/tauri";
+  import { disposeSfx, playSfx, setSfxEnabled } from "../audio/sfx";
   import { eventBus } from "../events/bus";
   import { tryEnterAutonomous, type LastAutonomous } from "./autonomousGate";
   import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
@@ -48,7 +79,6 @@
   // newer files queue behind it. Deduped on push so a file emitted twice
   // (initial scan + watcher event) shows up only once.
   let inboxQueue = $state<string[]>([]);
-  let blink = $state(false);
   // Briefly disable a button right after it fires so a double-tap can't stack
   // multiple boredom drops / animation overrides on the same tick.
   let busyAction = $state<ActionKey | null>(null);
@@ -86,11 +116,54 @@
   let saveFailureStreak = 0;
   let viewportSize = $state({ width: 360, height: 360 });
 
+  // ===== v0.2 The Adorable Update (PRD §27) =====
+  // REQ-104 squash & stretch juice — one-shot classes on the pet anchor.
+  let pressed = $state(false);
+  let boing = $state(false);
+  let landingPulse = $state(false);
+  let boingTimer: ReturnType<typeof setTimeout> | undefined;
+  let landingTimer: ReturnType<typeof setTimeout> | undefined;
+  // REQ-105 particle bursts. Each live particle snapshots its spawn origin so
+  // a wandering pet doesn't drag old hearts along with it.
+  type LiveParticle = ParticleSpec & { id: number; x: number; y: number };
+  let particles = $state<LiveParticle[]>([]);
+  let particleSeq = 0;
+  let reducedMotion = false;
+  let reducedMotionCleanup: (() => void) | null = null;
+  // REQ-106 idle micro-quirks.
+  let lastQuirkAt: number | null = null;
+  // REQ-107 snack tray + favorite discovery.
+  let snackTrayOpen = $state(false);
+  let snackTrayTimer: ReturnType<typeof setTimeout> | undefined;
+  let snackTrayEl: HTMLDivElement | null = $state(null);
+  let favoriteDiscovered = false;
+  // REQ-109 keepsakes / REQ-110 hatch-day. Both gate on the restored memory
+  // list so a restart can never duplicate a gift or a yearly celebration.
+  let memoriesRestored = false;
+  let lastKeepsakeAtIso: string | null = null;
+  let lastKeepsakeCheckAt = 0;
+  let hatchdayCelebratedYearly = false;
+  let monthlyHeartsCelebrated = false;
+  let lastDayStamp = "";
+  // REQ-111 time-of-day rituals.
+  let lastPeriod: Period | null = null;
+  // REQ-102 idle-triggered status report. `idleSince === 0` means "not idle".
+  let idleSince = 0;
+  let reportGateInFlight = false;
+  let lastReportAttemptAt = 0;
+  // REQ-112 drag dangle & landing — window movement sampled by hitTestTick.
+  let osDragging = false;
+  let osDragStartedAt = 0;
+  let dragStartWinPos: { x: number; y: number } | null = null;
+  let lastWinPos: { x: number; y: number } | null = null;
+  let stableWinSamples = 0;
+  // REQ-113 animation intensity (0–1.5), live-updated via settings:changed.
+  let animationIntensity = 1;
+  let unlistenSettings: (() => void) | null = null;
+
   let tickTimer: ReturnType<typeof setInterval> | undefined;
-  let blinkTimer: ReturnType<typeof setInterval> | undefined;
   let bubbleTimer: ReturnType<typeof setTimeout> | undefined;
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
-  let blinkInnerTimer: ReturnType<typeof setTimeout> | undefined;
   let hitTestTimer: ReturnType<typeof setInterval> | undefined;
   let unlistenInbox: (() => void) | null = null;
   let unsubscribeBus: (() => void) | null = null;
@@ -129,6 +202,15 @@
   const BUBBLE_MARGIN = 8;
   const BUBBLE_GAP = 10;
   const TAIL_INSET = 18;
+  // v0.2 (PRD §27) constants.
+  const KEEPSAKE_CHECK_MS = 10 * 60_000;
+  const REPORT_RETRY_BACKOFF_MS = 10 * 60_000;
+  const SNACK_TRAY_TIMEOUT_MS = 8_000;
+  const SNACK_TRAY_W = 232;
+  const SNACK_TRAY_H = 66;
+  // Ignore "window stopped moving" verdicts in the first moments of a drag —
+  // the position is briefly stable before the OS loop starts reporting moves.
+  const DRAG_MIN_SETTLE_MS = 400;
 
   function buildContext(): RuntimeContext {
     const dx = cursor.x - (position.x + petSize / 2);
@@ -243,6 +325,96 @@
       nudgeState = rememberNudge(nudgeState, nudge, now);
     }
 
+    // REQ-111 — time-of-day transition: dispatch the event and play the
+    // deterministic ritual when the pet is unhurried. Runs before the quirk
+    // check so a rare period change outranks an ordinary fidget.
+    const period = ctx.timeOfDay;
+    if (lastPeriod !== null && period !== lastPeriod) {
+      const ritual = ritualForTransition(lastPeriod, period, pet.currentAnimation);
+      eventBus.dispatch({ type: "TIME_OF_DAY_CHANGED", period }, pet);
+      if (ritual && now >= actionPlayingUntil) {
+        playSteps(ritual.steps);
+        if (ritual.bubble) flashBubble(`${pet.name}: ${ritual.bubble}`, 3_000);
+      }
+    }
+    lastPeriod = period;
+
+    // REQ-106 — idle micro-quirk. Skipped on nudge ticks so the nudge's own
+    // animation cue isn't immediately overwritten, and skipped entirely while
+    // a status report is due — quirks fire about once a minute, which would
+    // otherwise keep resetting the 60s idle window REQ-070 needs.
+    if (!nudge && !statusReportDue(now) && now >= actionPlayingUntil) {
+      const quirk = nextQuirk(pet, lastQuirkAt, now, Math.random, animationIntensity);
+      if (quirk) {
+        lastQuirkAt = now;
+        playSteps(quirk.steps);
+      }
+    }
+
+    // REQ-110 — a day rollover mid-session re-checks the hatch-day and
+    // re-arms the once-per-session monthly hearts.
+    const dayStamp = new Date(now).toDateString();
+    if (dayStamp !== lastDayStamp) {
+      const rolled = lastDayStamp !== "";
+      lastDayStamp = dayStamp;
+      if (rolled) {
+        monthlyHeartsCelebrated = false;
+        maybeCelebrateHatchday(now);
+      }
+    }
+
+    // REQ-109 — keepsake gate, evaluated at most every 10 minutes.
+    if (
+      api.hasBackend &&
+      memoriesRestored &&
+      now - lastKeepsakeCheckAt >= KEEPSAKE_CHECK_MS
+    ) {
+      lastKeepsakeCheckAt = now;
+      if (now >= actionPlayingUntil && canLeaveKeepsake(pet, lastKeepsakeAtIso, now)) {
+        void leaveKeepsake(now);
+      }
+    }
+
+    // REQ-102 — idle-window tracking + autonomous §9.8 status report. The
+    // dwell set is the gate's own IDLE_STATES so the two can never drift.
+    const idleNow =
+      STATUS_REPORT_GATE_CONSTANTS.IDLE_STATES.has(pet.currentAnimation) &&
+      now >= actionPlayingUntil;
+    if (idleNow) {
+      if (idleSince === 0) idleSince = now;
+    } else {
+      idleSince = 0;
+    }
+    if (
+      api.hasBackend &&
+      idleSince !== 0 &&
+      !reportGateInFlight &&
+      now - lastReportAttemptAt >= REPORT_RETRY_BACKOFF_MS &&
+      shouldFireStatusReport({
+        now,
+        lastReportAt: pet.lastReportAt,
+        createdAt: pet.createdAt,
+        currentAnimation: pet.currentAnimation,
+        idleSince,
+        inFlight: now < actionPlayingUntil,
+      })
+    ) {
+      reportGateInFlight = true;
+      lastReportAttemptAt = now;
+      void api
+        .runStatusReport()
+        .then((report) => {
+          // Mirror the backend's new watermark so the next debounced
+          // save_pet_state can't roll it back (REQ-102). Silent by design
+          // (REQ-073) — the report surfaces in Settings → Recent reports.
+          pet = { ...pet, lastReportAt: report.windowEnd };
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          reportGateInFlight = false;
+        });
+    }
+
     eventBus.dispatch({ type: "IDLE_TICK" }, pet);
 
     // Edge-trigger USER_RETURNED on the away→returning transition so
@@ -277,6 +449,203 @@
     }, ms);
   }
 
+  function clampIntensity(n: number): number {
+    return Number.isFinite(n) ? Math.max(0, Math.min(1.5, n)) : 1;
+  }
+
+  // REQ-114 — themed stage backgrounds the stylesheet defines. Anything else
+  // (including "transparent") clears the attribute so the overlay stays
+  // see-through. Mirrors STAGE_BACKGROUNDS in src-tauri/src/models.rs.
+  const STAGE_BACKGROUND_THEMES = new Set(["cream", "blossom", "mint", "night"]);
+
+  function applyStageBackground(value: string | undefined) {
+    if (typeof value === "string" && STAGE_BACKGROUND_THEMES.has(value)) {
+      document.body.dataset.stageBackground = value;
+    } else {
+      delete document.body.dataset.stageBackground;
+    }
+  }
+
+  /** True once 12h have elapsed since the last report — the cadence half of
+   *  the REQ-070 gate, checked cheaply so quirks can yield the idle window. */
+  function statusReportDue(now: number): boolean {
+    if (!api.hasBackend) return false;
+    const baseline = pet.lastReportAt ?? pet.createdAt;
+    const t = Date.parse(baseline);
+    if (Number.isNaN(t)) return false;
+    return now - t >= STATUS_REPORT_GATE_CONSTANTS.TWELVE_HOURS_MS;
+  }
+
+  /** REQ-104 — one-shot spring-back squash when an action lands on the pet. */
+  function triggerBoing() {
+    if (reducedMotion) return;
+    boing = false;
+    if (boingTimer) clearTimeout(boingTimer);
+    queueMicrotask(() => {
+      boing = true;
+    });
+    boingTimer = setTimeout(() => {
+      boing = false;
+      boingTimer = undefined;
+    }, 340);
+  }
+
+  /** REQ-112 — one-shot landing squash after a window drag settles. */
+  function triggerLandingPulse() {
+    if (reducedMotion) return;
+    landingPulse = false;
+    if (landingTimer) clearTimeout(landingTimer);
+    queueMicrotask(() => {
+      landingPulse = true;
+    });
+    landingTimer = setTimeout(() => {
+      landingPulse = false;
+      landingTimer = undefined;
+    }, 420);
+  }
+
+  /** REQ-105 — spawn a particle burst at the pet's current center. Decorative
+   *  only: skipped entirely under reduced motion or intensity 0, capped at
+   *  MAX_LIVE_PARTICLES concurrent nodes, each node removes itself on
+   *  animationend. */
+  function spawnBurst(kind: ParticleKind) {
+    if (reducedMotion) return;
+    const specs = particleSpecsFor(kind, Math.random, animationIntensity);
+    if (specs.length === 0) return;
+    const cx = position.x + petSize / 2;
+    const cy = position.y + petSize * 0.35;
+    const fresh: LiveParticle[] = specs.map((s) => ({
+      ...s,
+      id: ++particleSeq,
+      x: cx,
+      y: cy,
+    }));
+    const merged = [...particles, ...fresh];
+    particles =
+      merged.length > MAX_LIVE_PARTICLES
+        ? merged.slice(merged.length - MAX_LIVE_PARTICLES)
+        : merged;
+  }
+
+  function removeParticle(id: number) {
+    particles = particles.filter((p) => p.id !== id);
+  }
+
+  // ===== REQ-107 snack tray =====
+  function openSnackTray() {
+    snackTrayOpen = true;
+    playSfx("pop");
+    if (snackTrayTimer) clearTimeout(snackTrayTimer);
+    snackTrayTimer = setTimeout(() => {
+      snackTrayOpen = false;
+      snackTrayTimer = undefined;
+    }, SNACK_TRAY_TIMEOUT_MS);
+    // Move focus to the first snack so keyboard users land inside the menu
+    // (and Escape-to-close works immediately).
+    requestAnimationFrame(() => {
+      snackTrayEl?.querySelector<HTMLButtonElement>(".snack")?.focus();
+    });
+  }
+
+  function closeSnackTray() {
+    snackTrayOpen = false;
+    if (snackTrayTimer) {
+      clearTimeout(snackTrayTimer);
+      snackTrayTimer = undefined;
+    }
+  }
+
+  async function onSnackPick(key: SnackKey) {
+    closeSnackTray();
+    flashBusy("feed");
+    lastInteractionAt = Date.now();
+    recentPositive = true;
+    const result = applySnackFeed(pet, key, favoriteDiscovered);
+    pet = result.state;
+    playSteps(result.steps);
+    triggerBoing();
+    spawnBurst(result.favoriteDiscovered ? "hearts_big" : "crumbs");
+    playSfx(result.favoriteDiscovered ? "sparkle" : "nom");
+    flashedStat = null;
+    if (flashStatTimer) clearTimeout(flashStatTimer);
+    queueMicrotask(() => {
+      flashedStat = "hunger";
+    });
+    flashStatTimer = setTimeout(() => {
+      flashedStat = null;
+    }, 700);
+    flashBubble(result.bubble, result.favoriteDiscovered ? 4_000 : 2_500);
+    await api
+      .logEvent(result.eventType, JSON.stringify({ snack: key }), result.salience)
+      .catch(() => undefined);
+    if (result.memory && api.hasBackend) {
+      // Mark discovered regardless of persistence outcome so one session never
+      // writes the memory twice; a failed write simply rediscovers next launch.
+      favoriteDiscovered = true;
+      await api.createMemory(result.memory).catch(() => undefined);
+    } else if (result.favoriteDiscovered) {
+      favoriteDiscovered = true;
+    }
+    scheduleSave();
+  }
+
+  function onSnackTrayKey(e: KeyboardEvent) {
+    if (e.key === "Escape") closeSnackTray();
+  }
+
+  // ===== REQ-109 keepsake gifts =====
+  async function leaveKeepsake(now: number) {
+    const prior = lastKeepsakeAtIso;
+    const nowIso = new Date(now).toISOString();
+    lastKeepsakeAtIso = nowIso;
+    try {
+      const trinket = pickTrinket(pet.id, nowIso);
+      await api.createMemory({
+        type: KEEPSAKE_MEMORY_TYPE,
+        content: keepsakeMemoryContent(trinket),
+        importance: 2,
+        confidence: 1,
+      });
+      // Re-check after the await — an action the user started while the
+      // write was in flight shouldn't be stomped by the gift choreography.
+      if (Date.now() >= actionPlayingUntil) {
+        playSteps(CHOREOGRAPHY_CATALOG.delight_burst.variants[0]);
+      }
+      spawnBurst("confetti");
+      playSfx("sparkle");
+      flashBubble(keepsakeBubble(pet.name, trinket), 5_000);
+    } catch {
+      // Backend hiccup — roll back the stamp so the 10-minute check retries.
+      lastKeepsakeAtIso = prior;
+    }
+  }
+
+  // ===== REQ-110 hatch-day =====
+  function maybeCelebrateHatchday(now: number) {
+    const today = new Date(now);
+    const status = hatchdayStatus(pet.createdAt, today);
+    if (status.yearly && !hatchdayCelebratedYearly && api.hasBackend && memoriesRestored) {
+      hatchdayCelebratedYearly = true;
+      void (async () => {
+        await api
+          .createMemory({
+            type: HATCHDAY_MEMORY_TYPE,
+            content: hatchdayMemoryContent(status.ageYears),
+            importance: 3,
+            confidence: 1,
+          })
+          .catch(() => undefined);
+        playSteps(CHOREOGRAPHY_CATALOG.delight_burst.variants[0]);
+        spawnBurst("confetti");
+        playSfx("chime");
+        flashBubble(hatchdayBubble(pet.name, status.ageYears), 6_000);
+      })();
+    } else if (status.monthly && !monthlyHeartsCelebrated) {
+      monthlyHeartsCelebrated = true;
+      spawnBurst("hearts");
+    }
+  }
+
   /** Add a file to the consent queue, ignoring duplicates so the watcher's
    *  initial scan + a later modify event don't double-prompt. */
   function enqueueInboxFile(name: string) {
@@ -296,6 +665,10 @@
     // errors propagate so the consent prompt can surface them.
     const summary = await api.approveFile(name);
     dropFromInboxQueue(name);
+    // REQ-101 — the choreography reaction plays for this event, but its
+    // bubble is suppressed inside maybeChoreography so the summary below is
+    // never replaced (the LLM path resolves seconds later).
+    eventBus.dispatch({ type: "FILE_INSPECTION_APPROVED", path: name }, pet);
     flashBubble(`${pet.name}: ${summary}`, 6_000);
   }
 
@@ -308,15 +681,21 @@
 
   /**
    * §9.11 / REQ-094..099 — react to a salient event by playing a closed-catalog
-   * choreography. Tries the LLM first; on any failure (no provider, cooldown,
-   * malformed JSON, network error) falls back to a deterministic preset so the
-   * pet ALWAYS reacts visibly (REQ-098). Bubble tokens are restricted to the
-   * closed vocabulary (REQ-096) — no human sentences.
+   * choreography. With `useLlm`, tries the LLM first; on any failure (no
+   * provider, cooldown, malformed JSON, network error) falls back to a
+   * deterministic preset so the pet ALWAYS reacts visibly (REQ-098). Without
+   * `useLlm` (REQ-101: the event didn't clear the salience gate but still
+   * deserves a visible reaction), the deterministic preset plays directly —
+   * no network, no shared-LLM-cooldown consumption. Bubble tokens are
+   * restricted to the closed vocabulary (REQ-096) — no human sentences.
    */
-  async function maybeChoreography(event: PetEvent) {
+  async function maybeChoreography(event: PetEvent, useLlm: boolean) {
     // Chat path owns USER_SENT_MESSAGE and USER_RETURNED — don't double-fire.
     if (event.type === "USER_SENT_MESSAGE") return;
     if (event.type === "USER_RETURNED") return;
+    // REQ-111 — time-of-day is deterministic-ritual-only: an LLM pick here
+    // would burn the shared 90s cooldown and stomp the ritual mid-play.
+    if (event.type === "TIME_OF_DAY_CHANGED") return;
 
     const decision = tryEnterAutonomous({
       inFlight: autonomousInFlight,
@@ -327,24 +706,31 @@
     });
     if (!decision.proceed) return;
     lastChoreography = decision.nextLast;
-    autonomousInFlight = true;
 
     let pick: ChoreographyPick;
-    try {
-      const reply = await api.chooseChoreography(event.type);
-      const validated = validateChoreographyPayload(reply);
-      pick = validated ?? pickFallbackPreset(pet, event);
-    } catch {
-      // Network error, missing provider, cooldown rejection — fall back
-      // deterministically. The pet must still react (REQ-098).
+    if (useLlm) {
+      autonomousInFlight = true;
+      try {
+        const reply = await api.chooseChoreography(event.type);
+        const validated = validateChoreographyPayload(reply);
+        pick = validated ?? pickFallbackPreset(pet, event);
+      } catch {
+        // Network error, missing provider, cooldown rejection — fall back
+        // deterministically. The pet must still react (REQ-098).
+        pick = pickFallbackPreset(pet, event);
+      } finally {
+        autonomousInFlight = false;
+      }
+    } else {
       pick = pickFallbackPreset(pet, event);
-    } finally {
-      autonomousInFlight = false;
     }
 
     const steps = stepsForPick(pick);
     playSteps(steps);
-    if (pick.bubble) {
+    // The approval flow shows the file summary in the bubble — the motion
+    // plays, but a late LLM token must not replace that summary text.
+    const suppressBubble = event.type === "FILE_INSPECTION_APPROVED";
+    if (pick.bubble && !suppressBubble) {
       // Closed-vocabulary bubble (REQ-096). The same ChatBubble component
       // renders it as text — but the validator already proved this is one
       // of the allowed glyph/onomatopoeia tokens, so no free-text path is
@@ -431,14 +817,46 @@
     actionPlayingUntil = Date.now() + elapsed;
   }
 
+  // Which particle burst goes with each action (REQ-105). Feed is handled by
+  // the snack tray (REQ-107) so it has no entry here.
+  const ACTION_TO_BURST: Partial<Record<ActionKey, ParticleKind>> = {
+    play: "confetti",
+    pet: "hearts",
+    rest: "sleep",
+  };
+
+  // Which chirp goes with each action (REQ-117). User-initiated only —
+  // autonomous behaviors never make sound.
+  const ACTION_TO_SFX = {
+    pet: "boop",
+    play: "bounce",
+    rest: "settle",
+  } as const;
+
   async function onAction(key: ActionKey) {
     if (busyAction === key) return;
+    // REQ-107 — Feed opens the snack tray instead of feeding immediately;
+    // pressing Feed again while it's open closes it.
+    if (key === "feed") {
+      if (snackTrayOpen) {
+        closeSnackTray();
+      } else {
+        openSnackTray();
+      }
+      return;
+    }
+    closeSnackTray();
     flashBusy(key);
     lastInteractionAt = Date.now();
     recentPositive = true;
     const { state, bubble, eventType, salience, steps } = applyAction(pet, key);
     pet = state;
     playSteps(steps);
+    triggerBoing();
+    const burst = ACTION_TO_BURST[key];
+    if (burst) spawnBurst(burst);
+    const sound = key in ACTION_TO_SFX ? ACTION_TO_SFX[key as keyof typeof ACTION_TO_SFX] : null;
+    if (sound) playSfx(sound);
     // Pulse the affected gauge so the user sees the action register, even
     // if the stat was already at its cap.
     const statKey = ACTION_TO_STAT[key];
@@ -497,6 +915,7 @@
     if (e.button !== 0) return;
     dragStart = { x: e.clientX, y: e.clientY, pointerId: e.pointerId };
     dragged = false;
+    pressed = true; // REQ-104 press squish
     (e.currentTarget as HTMLElement | null)?.setPointerCapture?.(e.pointerId);
   }
 
@@ -506,6 +925,7 @@
     const dy = e.clientY - dragStart.y;
     if (!dragged && Math.hypot(dx, dy) > DRAG_THRESHOLD) {
       dragged = true;
+      pressed = false;
       if (api.hasBackend) {
         // OS takes over the pointer once dragging starts; release our capture
         // so the click that browsers normally synthesize on pointerup won't
@@ -513,15 +933,55 @@
         (e.currentTarget as HTMLElement | null)?.releasePointerCapture?.(
           dragStart.pointerId,
         );
+        beginOsDrag();
         getCurrentWindow().startDragging().catch(() => undefined);
       }
       dragStart = null;
     }
   }
 
+  /** REQ-112 — dangle pose + baseline for landing detection. The pinned grab
+   *  pose auto-expires after 15s in case a platform never reports the drop. */
+  function beginOsDrag() {
+    osDragging = true;
+    osDragStartedAt = Date.now();
+    stableWinSamples = 0;
+    dragStartWinPos = null;
+    lastWinPos = null;
+    playSteps([{ animation: GRAB_ANIMATION, durationMs: 15_000 }]);
+    getCurrentWindow()
+      .outerPosition()
+      .then((p) => {
+        dragStartWinPos = { x: p.x, y: p.y };
+        lastWinPos = { x: p.x, y: p.y };
+      })
+      .catch(() => undefined);
+  }
+
+  function finishDragLanding(winPos: { x: number; y: number }) {
+    osDragging = false;
+    const sf = cachedScaleFactor || 1;
+    const distance = dragStartWinPos
+      ? Math.hypot(winPos.x - dragStartWinPos.x, winPos.y - dragStartWinPos.y) / sf
+      : 0;
+    dragStartWinPos = null;
+    playSteps(landingSteps(distance));
+    triggerLandingPulse();
+    // The drop may have landed on a different-DPI monitor; refresh the cached
+    // scale factor in the background so hit-testing and the next landing use
+    // the right density.
+    getCurrentWindow()
+      .scaleFactor()
+      .then((fresh) => {
+        cachedScaleFactor = fresh;
+      })
+      .catch(() => undefined);
+  }
+
   function onPetPointerUp(e: PointerEvent) {
     (e.currentTarget as HTMLElement | null)?.releasePointerCapture?.(e.pointerId);
     dragStart = null;
+    pressed = false;
     // Reset on cancel/up too — a cancelled drag (e.g., touch interrupted by a
     // system gesture) would otherwise leave dragged=true and silently swallow
     // the next legitimate pet click.
@@ -542,7 +1002,8 @@
   let menuOpen = $state(false);
   let menuPos = $state({ x: 0, y: 0 });
   const MENU_W = 140;
-  const MENU_H = 40;
+  // Two items now: Settings… + Close Mochi (REQ-115).
+  const MENU_H = 76;
 
   function openContextMenu(e: MouseEvent) {
     e.preventDefault();
@@ -564,6 +1025,21 @@
     } catch (err) {
       console.warn("quit_app failed", err);
       flashBubble("(couldn't quit)", 3_000);
+    }
+  }
+
+  /** REQ-115 — the frameless overlay's only path to the settings window. */
+  async function openSettingsWindow() {
+    closeContextMenu();
+    if (!api.hasBackend) {
+      flashBubble(`${pet.name}: ✨ (settings only work in the desktop app)`, 3_000);
+      return;
+    }
+    try {
+      await api.openSettings();
+    } catch (err) {
+      console.warn("open_settings failed", err);
+      flashBubble("(couldn't open settings)", 3_000);
     }
   }
 
@@ -680,6 +1156,17 @@
     return { left: 8, top: 8, right: 8 + 100, bottom: 8 + 32 };
   }
 
+  // REQ-107 — snack tray floats just above the actions panel, right-aligned.
+  function snackTrayBox(): { left: number; top: number; right: number; bottom: number } {
+    const actions = actionsBox();
+    return {
+      left: viewportSize.width - SNACK_TRAY_W - 8,
+      top: actions.top - SNACK_TRAY_H - 6,
+      right: viewportSize.width - 8,
+      bottom: actions.top - 6,
+    };
+  }
+
   /** Obstacles the pet should avoid wandering into. */
   function currentObstacles(): Obstacle[] {
     const obs: Obstacle[] = [actionsBox()];
@@ -734,6 +1221,7 @@
     ) return true;
     if (isInsideRect(x, y, actionsBox())) return true;
     if (isInsideRect(x, y, statusBox())) return true;
+    if (snackTrayOpen && isInsideRect(x, y, snackTrayBox())) return true;
     if (bubbleOpen) {
       // Bubble is positioned absolutely at bubblePlacement.{left,top}; size is
       // BUBBLE_W x BUBBLE_H. Hit-test that rect with HIT_PAD slop.
@@ -777,6 +1265,21 @@
       const cp = await cursorPosition();
       const w = getCurrentWindow();
       const wp = await w.outerPosition();
+      // REQ-112 — landing detection piggybacks on this existing poll: once the
+      // window position holds still for LANDING_STABLE_SAMPLES consecutive
+      // samples (after a short settle grace), the drag is considered dropped.
+      if (osDragging) {
+        const settled = Date.now() - osDragStartedAt >= DRAG_MIN_SETTLE_MS;
+        if (lastWinPos && wp.x === lastWinPos.x && wp.y === lastWinPos.y) {
+          stableWinSamples += 1;
+          if (settled && stableWinSamples >= LANDING_STABLE_SAMPLES) {
+            finishDragLanding({ x: wp.x, y: wp.y });
+          }
+        } else {
+          stableWinSamples = 0;
+        }
+        lastWinPos = { x: wp.x, y: wp.y };
+      }
       const sf = cachedScaleFactor;
       const lx = (cp.x - wp.x) / sf;
       const ly = (cp.y - wp.y) / sf;
@@ -811,17 +1314,65 @@
     }
 
     lastTickAt = Date.now();
+    lastDayStamp = new Date().toDateString();
     tickTimer = setInterval(tick, TICK_MS);
 
-    const prefersReducedMotion = window.matchMedia(
-      "(prefers-reduced-motion: reduce)",
-    ).matches;
-    if (!prefersReducedMotion) {
-      blinkTimer = setInterval(() => {
-        blink = true;
-        if (blinkInnerTimer) clearTimeout(blinkInnerTimer);
-        blinkInnerTimer = setTimeout(() => (blink = false), 140);
-      }, 4_500 + Math.random() * 2_000);
+    // Gates every decorative motion path (REQ-113) and follows OS toggles
+    // live (timer-free change listener). The old blink interval was removed —
+    // MochiSprite ignores the blink prop by design (eyes are baked into each
+    // pose), so the timer was dead weight.
+    const reducedMotionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+    reducedMotion = reducedMotionQuery.matches;
+    const onReducedMotionChange = (e: MediaQueryListEvent) => {
+      reducedMotion = e.matches;
+    };
+    reducedMotionQuery.addEventListener("change", onReducedMotionChange);
+    reducedMotionCleanup = () =>
+      reducedMotionQuery.removeEventListener("change", onReducedMotionChange);
+
+    if (api.hasBackend) {
+      // REQ-113/114/117 — load animation intensity, stage background, and the
+      // sound toggle; follow live changes from the settings window.
+      try {
+        const settings = await api.getSettings();
+        animationIntensity = clampIntensity(settings.animationIntensity);
+        applyStageBackground(settings.stageBackground);
+        setSfxEnabled(settings.soundEffects);
+      } catch {
+        // Defaults stay: intensity 1, transparent stage, sounds on.
+      }
+      try {
+        unlistenSettings = await listen<{
+          animationIntensity?: number;
+          stageBackground?: string;
+          soundEffects?: boolean;
+        }>("settings:changed", (payload) => {
+          if (payload && typeof payload.animationIntensity === "number") {
+            animationIntensity = clampIntensity(payload.animationIntensity);
+          }
+          if (payload && "stageBackground" in payload) {
+            applyStageBackground(payload.stageBackground);
+          }
+          if (payload && typeof payload.soundEffects === "boolean") {
+            setSfxEnabled(payload.soundEffects);
+          }
+        });
+      } catch {
+        // Live updates are a nicety; the mount-time read above still applied.
+      }
+
+      // REQ-107/109/110 — restore care-loop flags from durable memories so a
+      // restart can't re-discover the favorite, duplicate a keepsake, or
+      // repeat this year's hatch-day.
+      try {
+        const memories = await api.listMemories(200);
+        favoriteDiscovered = isFavoriteDiscoveredInMemories(memories);
+        lastKeepsakeAtIso = lastKeepsakeAt(memories);
+        hatchdayCelebratedYearly = hasCelebratedHatchdayThisYear(memories, new Date());
+        memoriesRestored = true;
+      } catch (err) {
+        console.warn("memory restore failed", err);
+      }
     }
 
     if (api.hasBackend) {
@@ -845,17 +1396,37 @@
     // Subscribe to the in-process bus so high-salience autonomous events
     // actually trigger a response (otherwise the salience gate is dead code).
     unsubscribeBus = eventBus.subscribe((event, state) => {
-      if (!api.hasBackend) return;
-      // Long absences keep the existing chat path (text reply, mood-aware).
+      // REQ-108 — the deterministic greeting ritual plays instantly, with or
+      // without a backend/LLM; the mood-aware chat line follows if available.
       if (event.type === "USER_RETURNED" && event.awayMinutes >= 30) {
-        void maybeAutonomousSpeak("returned", event.awayMinutes);
+        const greeting = greetingForReturn(event.awayMinutes);
+        if (greeting) {
+          playSteps(greeting.steps);
+          flashBubble(`${pet.name}: ${greeting.bubble}`, 4_000);
+          if (greeting.burst) spawnBurst(greeting.burst);
+          // The user just came back — a welcome counts as user-initiated.
+          playSfx("chime");
+        }
+        if (api.hasBackend) {
+          void maybeAutonomousSpeak("returned", event.awayMinutes);
+        }
         return;
       }
+      if (!api.hasBackend) return;
       // §9.11 behavior choreography for other high-salience events.
       // shouldCallLLM also consumes the shared 90s autonomous LLM cooldown,
       // so chat and choreography compete for the same LLM budget (REQ-097).
       if (shouldCallLLM(event, state)) {
-        void maybeChoreography(event);
+        void maybeChoreography(event, true);
+        return;
+      }
+      // REQ-101 — inbox moments always earn a visible deterministic reaction,
+      // even when they don't clear the LLM salience gate.
+      if (
+        event.type === "FILE_FOUND_IN_INBOX" ||
+        event.type === "FILE_INSPECTION_APPROVED"
+      ) {
+        void maybeChoreography(event, false);
       }
     });
 
@@ -868,6 +1439,12 @@
             api
               .logEvent("FILE_FOUND_IN_INBOX", payload.name, 55)
               .catch(() => undefined);
+            // REQ-101 — route the moment through the bus so Mochi visibly
+            // notices the letter (curious peek) instead of only logging it.
+            eventBus.dispatch(
+              { type: "FILE_FOUND_IN_INBOX", path: payload.name },
+              pet,
+            );
           },
         );
       } catch (err) {
@@ -875,24 +1452,37 @@
       }
     }
 
+    // REQ-101 — boot is a real event now: a wake-up beat plus APP_STARTED on
+    // the bus. REQ-110 — check the hatch-day once the memory flags are in.
+    playSteps([
+      { animation: "stretch", durationMs: 600 },
+      { animation: "wiggle", durationMs: 450 },
+    ]);
+    eventBus.dispatch({ type: "APP_STARTED" }, pet);
+    maybeCelebrateHatchday(Date.now());
     flashBubble("I'm awake. I'll stay out of the way.", 5_000);
   });
 
   onDestroy(() => {
     destroyed = true;
     if (tickTimer) clearInterval(tickTimer);
-    if (blinkTimer) clearInterval(blinkTimer);
-    if (blinkInnerTimer) clearTimeout(blinkInnerTimer);
     if (bubbleTimer) clearTimeout(bubbleTimer);
     if (saveTimer) clearTimeout(saveTimer);
     if (busyTimer) clearTimeout(busyTimer);
     if (flashStatTimer) clearTimeout(flashStatTimer);
     if (hitTestTimer) clearInterval(hitTestTimer);
+    if (boingTimer) clearTimeout(boingTimer);
+    if (landingTimer) clearTimeout(landingTimer);
+    if (snackTrayTimer) clearTimeout(snackTrayTimer);
     clearActionTimers();
     window.removeEventListener("resize", onResize);
     window.removeEventListener("pointermove", onPointerMove);
     if (unlistenInbox) unlistenInbox();
+    if (unlistenSettings) unlistenSettings();
     if (unsubscribeBus) unsubscribeBus();
+    if (reducedMotionCleanup) reducedMotionCleanup();
+    delete document.body.dataset.stageBackground;
+    disposeSfx();
     // Restore non-click-through state so a future window reuse isn't stuck.
     if (api.hasBackend) {
       getCurrentWindow().setIgnoreCursorEvents(false).catch(() => undefined);
@@ -903,6 +1493,9 @@
 <div class="pet-stage">
   <button
     class="pet-anchor"
+    class:pressed
+    class:boing
+    class:landing={landingPulse}
     style="left: {position.x}px; top: {position.y}px; width: {petSize}px; height: {petSize}px;"
     onpointerdown={onPointerDown}
     onpointermove={onPetPointerMove}
@@ -917,9 +1510,46 @@
       animation={pet.currentAnimation}
       size={petSize}
       facing={facing}
-      blink={blink}
     />
   </button>
+
+  {#if particles.length > 0}
+    <div class="particle-layer" aria-hidden="true">
+      {#each particles as p (p.id)}
+        <span
+          class="particle color-{p.colorIndex}"
+          style="left: {p.x}px; top: {p.y}px; font-size: {p.sizePx}px; --dx: {p.dx}px; --rise: {p.rise}px; animation-duration: {p.durationMs}ms; animation-delay: {p.delayMs}ms;"
+          onanimationend={() => removeParticle(p.id)}
+        >{p.glyph}</span>
+      {/each}
+    </div>
+  {/if}
+
+  {#if snackTrayOpen}
+    <div
+      class="snack-tray"
+      bind:this={snackTrayEl}
+      style="left: {snackTrayBox().left}px; top: {snackTrayBox().top}px; width: {SNACK_TRAY_W}px;"
+      role="menu"
+      aria-label="Pick a snack for Mochi"
+      tabindex="-1"
+      onkeydown={onSnackTrayKey}
+    >
+      {#each SNACK_KEYS as key (key)}
+        <button
+          type="button"
+          role="menuitem"
+          class="snack"
+          onclick={() => onSnackPick(key)}
+          aria-label={`Feed ${SNACKS[key].label}`}
+          title={SNACKS[key].label}
+        >
+          <span class="snack-icon" aria-hidden="true">{SNACKS[key].icon}</span>
+          <span class="snack-label">{SNACKS[key].label}</span>
+        </button>
+      {/each}
+    </div>
+  {/if}
 
   {#if bubbleOpen && bubbleText}
     <div
@@ -948,11 +1578,24 @@
   {/if}
 
   <div class="status-anchor">
-    <PetStatus {pet} {saving} open={statusOpen} onToggle={toggleStatus} {flashedStat} />
+    <PetStatus
+      {pet}
+      {saving}
+      open={statusOpen}
+      onToggle={toggleStatus}
+      {flashedStat}
+      onOpenSettings={openSettingsWindow}
+    />
   </div>
 
   <div class="actions-anchor">
-    <PetActions onAction={onAction} onReport={onReport} busy={busyAction} reporting={reporting} />
+    <PetActions
+      onAction={onAction}
+      onReport={onReport}
+      busy={busyAction}
+      reporting={reporting}
+      feedExpanded={snackTrayOpen}
+    />
   </div>
 
   {#if menuOpen}
@@ -970,6 +1613,9 @@
       tabindex="-1"
       onkeydown={onMenuKey}
     >
+      <button type="button" role="menuitem" class="menu-item" onclick={openSettingsWindow}>
+        Settings…
+      </button>
       <button type="button" role="menuitem" class="menu-item" onclick={quitApp}>
         Close Mochi
       </button>
@@ -990,9 +1636,148 @@
     padding: 0;
     cursor: grab;
     pointer-events: auto;
+    /* REQ-104 — squash pivots at the feet so squishes read as body weight. */
+    transform-origin: center bottom;
   }
   .pet-anchor:active {
     cursor: grabbing;
+  }
+  /* REQ-104 — press squish + spring-back boing. Transform-only (GPU). */
+  .pet-anchor.pressed {
+    transform: scale(1.05, 0.92);
+    transition: transform 90ms ease;
+  }
+  .pet-anchor.boing {
+    animation: boing 320ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  /* REQ-112 — landing squash after a window drag settles. */
+  .pet-anchor.landing {
+    animation: land-squash 380ms ease-out;
+  }
+  @keyframes boing {
+    0% {
+      transform: scale(1.1, 0.88);
+    }
+    55% {
+      transform: scale(0.96, 1.06);
+    }
+    100% {
+      transform: scale(1, 1);
+    }
+  }
+  @keyframes land-squash {
+    0% {
+      transform: scale(1.14, 0.84);
+    }
+    50% {
+      transform: scale(0.94, 1.07);
+    }
+    100% {
+      transform: scale(1, 1);
+    }
+  }
+  /* REQ-105 — particle bursts. Decorative: never intercepts the cursor. */
+  .particle-layer {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  .particle {
+    position: absolute;
+    pointer-events: none;
+    user-select: none;
+    font-weight: 700;
+    text-shadow: 0 1px 0 rgba(255, 255, 255, 0.5);
+    will-change: transform, opacity;
+    animation-name: particle-float;
+    animation-timing-function: ease-out;
+    animation-fill-mode: both;
+  }
+  .particle.color-0 {
+    color: #ff7aa1;
+  }
+  .particle.color-1 {
+    color: #ffb347;
+  }
+  .particle.color-2 {
+    color: #7fd8be;
+  }
+  .particle.color-3 {
+    color: #b39ddb;
+  }
+  @keyframes particle-float {
+    0% {
+      transform: translate(-50%, 0) scale(0.7);
+      opacity: 0;
+    }
+    15% {
+      opacity: 1;
+    }
+    100% {
+      transform: translate(calc(-50% + var(--dx)), calc(-1 * var(--rise))) scale(1);
+      opacity: 0;
+    }
+  }
+  /* REQ-107 — snack tray. */
+  .snack-tray {
+    position: absolute;
+    box-sizing: border-box;
+    display: flex;
+    justify-content: center;
+    gap: 6px;
+    background: rgba(255, 255, 255, 0.96);
+    padding: 6px;
+    border-radius: 12px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+    pointer-events: auto;
+    z-index: 4;
+  }
+  .snack {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    width: 68px;
+    height: 54px;
+    border: 0;
+    border-radius: 10px;
+    background: rgba(255, 240, 245, 0.85);
+    color: var(--mochi-text, #3a2b34);
+    cursor: pointer;
+    transition: transform 0.08s ease, background 0.15s ease;
+  }
+  .snack:hover,
+  .snack:focus-visible {
+    background: rgba(255, 218, 232, 0.95);
+  }
+  .snack:active {
+    transform: scale(0.94);
+  }
+  .snack-icon {
+    font-size: 18px;
+    line-height: 1;
+  }
+  .snack-label {
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pet-anchor.pressed {
+      transform: none;
+      transition: none;
+    }
+    .pet-anchor.boing,
+    .pet-anchor.landing {
+      animation: none;
+    }
+    /* Bursts are never spawned under reduced motion; this is belt-and-braces
+       so a stray node can't linger without its removing animationend. */
+    .particle {
+      display: none;
+    }
   }
   .bubble-anchor {
     position: absolute;

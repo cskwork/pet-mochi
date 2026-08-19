@@ -14,9 +14,9 @@ use crate::llm::report::{
 use crate::llm::provider::{LlmProvider, LlmRequest};
 use crate::llm::CooldownManager;
 use crate::models::{
-    endpoint_is_loopback, now_rfc3339, parse_timestamp, DailyReflection, EventLogEntry,
-    Interaction, Memory, NewInteraction, NewMemory, NewStatusReport, PetState, Settings,
-    StatusReport,
+    endpoint_is_loopback, normalize_stage_background, now_rfc3339, parse_timestamp,
+    DailyReflection, EventLogEntry, Interaction, Memory, NewInteraction, NewMemory,
+    NewStatusReport, PetState, Settings, StatusReport,
 };
 use crate::sandbox::{
     builtin_skills, list_inbox, read_inbox_by_name, write_dream, write_export, write_note,
@@ -71,6 +71,23 @@ pub fn quit_app(app: tauri::AppHandle) {
     app.exit(0);
 }
 
+/// REQ-115 — show the settings window. It is declared `visible: false` in
+/// tauri.conf.json and hidden-on-close (see lib.rs), so the pet's context
+/// menu is the one and only way users reach Settings.
+#[tauri::command]
+pub fn open_settings(app: tauri::AppHandle) -> AppResult<()> {
+    use tauri::Manager;
+    let window = app
+        .get_webview_window("settings")
+        .ok_or_else(|| AppError::NotFound("settings window".to_string()))?;
+    window
+        .show()
+        .map_err(|e| AppError::Internal(format!("show settings window: {e}")))?;
+    let _ = window.unminimize();
+    let _ = window.set_focus();
+    Ok(())
+}
+
 // ============== Settings (secrets handled separately) ==============
 
 #[tauri::command]
@@ -93,6 +110,10 @@ pub fn save_settings(state: State<'_, AppState>, settings: Settings) -> AppResul
 
     let mut to_persist = settings.clone();
     to_persist.cloud_api_key_set = false; // never persist this flag
+    // REQ-114 — clamp to the closed background list so an arbitrary string
+    // can never reach the frontend's data attribute.
+    to_persist.stage_background =
+        normalize_stage_background(&to_persist.stage_background).to_string();
     let json = serde_json::to_string(&to_persist)?;
     state.db.put_setting(SETTINGS_KEY, &json)?;
 

@@ -7,8 +7,12 @@ import type { MovementState } from "./state";
  *
  * 1. **Cadence:** at least 12 hours have elapsed since the last report
  *    (or, on first run, since the pet was created).
- * 2. **Idle window:** the pet is currently in `idle` or `sleep`, and has
- *    been so for at least 60 000 ms.
+ * 2. **Idle window:** the pet is currently in a calm resting pose
+ *    (`idle`/`sit`/`look_cursor`/`sleep`) and has been for at least
+ *    60 000 ms. The set is wider than literal `idle` on purpose:
+ *    `chooseMovement` re-rolls uniformly among idle/sit/look_cursor every
+ *    3s tick, so requiring `idle` for 20 consecutive ticks would have
+ *    probability (1/3)^20 — the gate would be unreachable in practice.
  * 3. **No in-flight action:** an action animation sequence (feed/play/etc.)
  *    is not mid-playback.
  *
@@ -36,6 +40,8 @@ const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
 const IDLE_DWELL_MS = 60_000;
 const IDLE_STATES: ReadonlySet<MovementState> = new Set<MovementState>([
   "idle",
+  "sit",
+  "look_cursor",
   "sleep",
 ]);
 

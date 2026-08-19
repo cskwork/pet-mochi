@@ -53,6 +53,12 @@
     wiggle: "/sprites/mochi-wiggle.png",
     dizzy: "/sprites/mochi-dizzy.png",
     surprise: "/sprites/mochi-surprise.png",
+    // REQ-116 snack-specific eat frames (paired by the tray's step sequences,
+    // same bite/chew rhythm as eat/eat_2).
+    eat_strawberry: "/sprites/mochi-eat-strawberry-1.png",
+    eat_strawberry_2: "/sprites/mochi-eat-strawberry-2.png",
+    eat_cookie: "/sprites/mochi-eat-cookie-1.png",
+    eat_cookie_2: "/sprites/mochi-eat-cookie-2.png",
   };
 
   // Subtle CSS tint per mood so the same base PNG reads as a different state
@@ -96,6 +102,8 @@
 
   let scaleX = $derived(facing === "left" ? -1 : 1);
   let isAsleep = $derived(animation === "sleep");
+  // Covers eat/eat_2 and the REQ-116 snack-specific frames.
+  let isEating = $derived(animation.startsWith("eat"));
   let moodFilter = $derived(MOOD_FILTER[mood]);
 </script>
 
@@ -127,7 +135,7 @@
     <div class="mark mark-curious" aria-hidden="true">?</div>
   {/if}
 
-  {#if mood === "hungry" && !isAsleep && animation !== "eat" && animation !== "eat_2"}
+  {#if mood === "hungry" && !isAsleep && !isEating}
     <div class="mark mark-hungry" aria-hidden="true">🍡</div>
   {/if}
 
@@ -152,7 +160,7 @@
     <div class="mark mark-zzz" aria-hidden="true">~</div>
   {/if}
 
-  {#if animation === "eat" || animation === "eat_2"}
+  {#if isEating}
     <div class="mark mark-crumb" aria-hidden="true">·</div>
   {/if}
 </div>
@@ -204,7 +212,11 @@
 
   /* Munching = quick small vertical squash so the chew reads even on a still PNG. */
   .mochi[data-anim="eat"] .sprite,
-  .mochi[data-anim="eat_2"] .sprite {
+  .mochi[data-anim="eat_2"] .sprite,
+  .mochi[data-anim="eat_strawberry"] .sprite,
+  .mochi[data-anim="eat_strawberry_2"] .sprite,
+  .mochi[data-anim="eat_cookie"] .sprite,
+  .mochi[data-anim="eat_cookie_2"] .sprite {
     animation: chew 0.32s ease-in-out infinite;
   }
 
@@ -221,6 +233,40 @@
   /* Pat reaction: tiny lean forward. */
   .mochi[data-anim="blush"] .sprite {
     animation: leanIn 0.7s ease-in-out infinite;
+  }
+
+  /* REQ-100 — expressive set (REQ-015) motion. Each pose is a single PNG, so
+     a transform-only keyframe carries the movement the name promises. */
+  .mochi[data-anim="stretch"] .sprite {
+    animation: stretchUp 1.2s ease-in-out infinite;
+  }
+
+  .mochi[data-anim="peek"] .sprite {
+    animation: peekSide 1.4s ease-in-out infinite;
+  }
+
+  .mochi[data-anim="tilt_head"] .sprite {
+    animation: tiltHold 1.6s ease-in-out infinite;
+  }
+
+  .mochi[data-anim="shake"] .sprite {
+    animation: shakeX 0.4s ease-in-out infinite;
+  }
+
+  .mochi[data-anim="nuzzle"] .sprite {
+    animation: nuzzleIn 1.1s ease-in-out infinite;
+  }
+
+  .mochi[data-anim="wiggle"] .sprite {
+    animation: wiggle 0.45s ease-in-out infinite;
+  }
+
+  .mochi[data-anim="dizzy"] .sprite {
+    animation: dizzyWobble 0.9s linear infinite;
+  }
+
+  .mochi[data-anim="surprise"] .sprite {
+    animation: surprisePop 0.55s ease-out infinite;
   }
 
   @keyframes breathe {
@@ -312,6 +358,86 @@
     }
     50% {
       transform: scaleX(var(--scale-x)) translateY(2px) rotate(2deg);
+    }
+  }
+
+  @keyframes stretchUp {
+    0%,
+    100% {
+      transform: scaleX(var(--scale-x)) scale(1, 1) translateY(0);
+    }
+    50% {
+      transform: scaleX(var(--scale-x)) scale(0.97, 1.07) translateY(-3px);
+    }
+  }
+
+  @keyframes peekSide {
+    0%,
+    100% {
+      transform: scaleX(var(--scale-x)) translateX(0) rotate(0deg);
+    }
+    50% {
+      transform: scaleX(var(--scale-x)) translateX(4px) rotate(3deg);
+    }
+  }
+
+  @keyframes tiltHold {
+    0%,
+    100% {
+      transform: scaleX(var(--scale-x)) rotate(-5deg);
+    }
+    50% {
+      transform: scaleX(var(--scale-x)) rotate(-9deg) translateY(1px);
+    }
+  }
+
+  @keyframes shakeX {
+    0%,
+    100% {
+      transform: scaleX(var(--scale-x)) translateX(-2px);
+    }
+    50% {
+      transform: scaleX(var(--scale-x)) translateX(2px);
+    }
+  }
+
+  @keyframes nuzzleIn {
+    0%,
+    100% {
+      transform: scaleX(var(--scale-x)) rotate(0deg) translateX(0);
+    }
+    50% {
+      transform: scaleX(var(--scale-x)) rotate(4deg) translateX(3px) translateY(1px);
+    }
+  }
+
+  @keyframes dizzyWobble {
+    0% {
+      transform: scaleX(var(--scale-x)) rotate(-8deg) translateX(-2px);
+    }
+    25% {
+      transform: scaleX(var(--scale-x)) rotate(0deg) translateY(-2px);
+    }
+    50% {
+      transform: scaleX(var(--scale-x)) rotate(8deg) translateX(2px);
+    }
+    75% {
+      transform: scaleX(var(--scale-x)) rotate(0deg) translateY(2px);
+    }
+    100% {
+      transform: scaleX(var(--scale-x)) rotate(-8deg) translateX(-2px);
+    }
+  }
+
+  @keyframes surprisePop {
+    0% {
+      transform: scaleX(var(--scale-x)) scale(1, 1);
+    }
+    30% {
+      transform: scaleX(var(--scale-x)) scale(1.07, 1.07) translateY(-2px);
+    }
+    100% {
+      transform: scaleX(var(--scale-x)) scale(1, 1);
     }
   }
 
@@ -417,9 +543,21 @@
     .mochi[data-anim="celebrate"] .sprite,
     .mochi[data-anim="eat"] .sprite,
     .mochi[data-anim="eat_2"] .sprite,
+    .mochi[data-anim="eat_strawberry"] .sprite,
+    .mochi[data-anim="eat_strawberry_2"] .sprite,
+    .mochi[data-anim="eat_cookie"] .sprite,
+    .mochi[data-anim="eat_cookie_2"] .sprite,
     .mochi[data-anim="yawn"] .sprite,
     .mochi[data-anim="roll"] .sprite,
     .mochi[data-anim="blush"] .sprite,
+    .mochi[data-anim="stretch"] .sprite,
+    .mochi[data-anim="peek"] .sprite,
+    .mochi[data-anim="tilt_head"] .sprite,
+    .mochi[data-anim="shake"] .sprite,
+    .mochi[data-anim="nuzzle"] .sprite,
+    .mochi[data-anim="wiggle"] .sprite,
+    .mochi[data-anim="dizzy"] .sprite,
+    .mochi[data-anim="surprise"] .sprite,
     .mark {
       animation: none !important;
     }
