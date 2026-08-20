@@ -1,0 +1,1398 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Pet Mochi — a local-first AI desktop pet</title>
+<meta name="description" content="A local-first AI digital pet that lives on your desktop. Mochi moves on her own, remembers what matters, and chats briefly through an optional local LLM. Works fully offline. No accounts. No cloud. No telemetry." />
+<meta name="theme-color" content="#fff1e0" />
+<link rel="icon" type="image/png" href="assets/sprites/mochi-original.png" />
+<meta property="og:title" content="Pet Mochi — a local-first AI desktop pet" />
+<meta property="og:description" content="Alive without the LLM. Mochi moves on her own, remembers what matters, and never phones home. No accounts, no cloud, no telemetry." />
+<meta property="og:type" content="website" />
+<meta property="og:url" content="https://cskwork.github.io/pet-mochi/" />
+<meta property="og:image" content="https://cskwork.github.io/pet-mochi/assets/sprites/mochi-original.png" />
+<meta name="twitter:card" content="summary" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700;800&display=swap" rel="stylesheet" />
+<style>
+  /* ------------------------------------------------------------------ */
+  /* Tokens — drawn from the app's own visual system (src/styles.css).  */
+  /* ------------------------------------------------------------------ */
+  :root {
+    --cream-1: #fffdf7;      /* stage: cream (start) */
+    --cream-2: #fff1e0;      /* stage: cream (end)   */
+    --blossom-1: #fff5f8;    /* stage: blossom (start) */
+    --blossom-2: #ffdfeb;    /* stage: blossom (end) */
+    --mint-1: #f2fff9;
+    --mint-2: #dcf5e9;
+    --night-1: #2c2440;      /* stage: night (start) */
+    --night-2: #1c1730;      /* stage: night (end) */
+    --ink: #3a2b34;          /* app text ink */
+    --ink-2: #6a5560;        /* app secondary ink */
+    --ink-3: #95808c;
+    --pink: #ff7aa1;         /* app accent */
+    --pink-deep: #b34a6e;    /* text-safe accent on cream (4.6:1) */
+    --ok: #6dc28a;           /* stat bar colors — the app's real ones */
+    --warn: #f5b955;
+    --danger: #e57373;
+    --tint-happy: #ffe3ea;   /* ChatBubble.svelte mood tints */
+    --tint-curious: #fff1d6;
+    --tint-tired: #e8dcea;
+    --tint-hungry: #ffe0cc;
+    --tint-bored: #e2e8ee;
+    --tint-lonely: #d9d2ea;
+    --line: #f0dfe7;
+    --line-strong: #e7cbd8;
+    --radius: 16px;
+    --shadow-card: 0 18px 40px -18px rgba(58, 43, 52, 0.22);
+    --font-display: "Baloo 2", ui-rounded, "Hiragino Maru Gothic ProN", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", "Quicksand", system-ui, sans-serif;
+    --font-body: ui-rounded, "Hiragino Maru Gothic ProN", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", -apple-system, "Segoe UI", system-ui, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    margin: 0;
+    font-family: var(--font-body);
+    color: var(--ink);
+    background: linear-gradient(160deg, var(--cream-1) 0%, var(--cream-2) 100%);
+    background-attachment: fixed;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    caret-color: var(--pink);
+  }
+
+  ::selection { background: #ffc7d6; color: var(--ink); }
+
+  :focus-visible {
+    outline: 2px solid var(--pink);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+
+  img { max-width: 100%; display: block; }
+
+  a { color: var(--pink-deep); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+  a:hover { color: var(--ink); }
+
+  h1, h2, h3 { font-family: var(--font-display); line-height: 1.12; margin: 0; text-wrap: balance; }
+
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+
+  section { padding: 88px 0; }
+  section + section { padding-top: 24px; }
+
+  h2 { font-size: clamp(1.7rem, 3.4vw, 2.4rem); font-weight: 800; letter-spacing: -0.02em; }
+  h2 + .sub { color: var(--ink-2); max-width: 58ch; margin: 10px 0 0; font-size: 1.02rem; }
+
+  .more { font-weight: 600; white-space: nowrap; }
+
+  /* ------------------------------------------------------------------ */
+  /* Header                                                             */
+  /* ------------------------------------------------------------------ */
+  header {
+    position: sticky; top: 0; z-index: 40;
+    background: rgba(255, 253, 247, 0.88);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav {
+    display: flex; align-items: center; gap: 20px;
+    padding-top: 12px; padding-bottom: 12px;
+  }
+  .wordmark {
+    display: flex; align-items: center; gap: 10px;
+    font-family: var(--font-display); font-weight: 800; font-size: 1.15rem;
+    color: var(--ink); text-decoration: none; letter-spacing: -0.01em;
+  }
+  .wordmark img { width: 30px; height: 30px; }
+  .nav nav { margin-left: auto; display: flex; gap: 18px; font-size: 0.95rem; font-weight: 600; }
+  .nav nav a { color: var(--ink-2); text-decoration: none; }
+  .nav nav a:hover { color: var(--ink); }
+  .nav nav a.gh { color: var(--ink); display: inline-flex; align-items: center; gap: 6px; }
+  .nav nav a.gh svg { width: 16px; height: 16px; fill: currentColor; }
+  .lang-btn {
+    font-family: var(--font-display); font-weight: 700; font-size: 0.85rem;
+    color: var(--ink-2); background: rgba(255, 255, 255, 0.7);
+    border: 1px solid var(--line-strong);
+    border-radius: 999px; padding: 5px 13px; cursor: pointer;
+    transition: color 140ms ease, border-color 140ms ease, background 140ms ease;
+  }
+  .lang-btn:hover { color: var(--ink); border-color: var(--pink); background: #fff; }
+
+  /* ------------------------------------------------------------------ */
+  /* Hero                                                               */
+  /* ------------------------------------------------------------------ */
+  .hero { padding-top: 64px; padding-bottom: 40px; }
+  .hero-grid {
+    display: grid;
+    grid-template-columns: 1fr minmax(400px, 470px) 1fr;
+    gap: 44px;
+    align-items: center;
+  }
+  .hero h1 {
+    font-size: clamp(2.1rem, 4vw, 3rem);
+    font-weight: 800;
+    letter-spacing: -0.03em;
+  }
+  .hero .lede { color: var(--ink-2); font-size: 1.08rem; margin: 16px 0 0; max-width: 34ch; }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+  .chip {
+    font-family: var(--font-mono); font-size: 0.72rem; font-weight: 600;
+    color: var(--ink-2);
+    border: 1px solid var(--line-strong);
+    background: rgba(255, 255, 255, 0.66);
+    border-radius: 999px; padding: 3px 10px;
+  }
+  .hero-cta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 26px; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--font-display); font-weight: 700; font-size: 1rem;
+    padding: 11px 20px; border-radius: 14px; text-decoration: none;
+    border: 2px solid transparent; cursor: pointer; font-family: inherit;
+    transition: transform 140ms ease, box-shadow 140ms ease, background 140ms ease;
+  }
+  .btn:active { transform: translateY(1px) scale(0.99); }
+  .btn-primary {
+    background: var(--ink); color: #fff6fa;
+    box-shadow: 0 10px 24px -10px rgba(58, 43, 52, 0.55);
+  }
+  .btn-primary:hover { background: #4d3945; color: #fff; }
+  .btn-ghost {
+    background: rgba(255, 255, 255, 0.7); color: var(--ink);
+    border-color: var(--line-strong);
+  }
+  .btn-ghost:hover { background: #fff; border-color: var(--pink); }
+  .btn svg { width: 17px; height: 17px; }
+
+  .claims { list-style: none; margin: 0; padding: 0; }
+  .claims li { padding: 14px 0; border-bottom: 1px solid var(--line); }
+  .claims li:first-child { border-top: 1px solid var(--line); }
+  .claims b { display: block; font-size: 1rem; }
+  .claims span { color: var(--ink-2); font-size: 0.92rem; }
+
+  /* ------------------------------------------------------------------ */
+  /* The Device                                                         */
+  /* ------------------------------------------------------------------ */
+  .device-col { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+  .device {
+    width: 100%;
+    background: linear-gradient(180deg, #fffefa 0%, #fbf3ea 100%);
+    border: 1px solid #eadbce;
+    border-radius: 40px;
+    padding: 22px 22px 18px;
+    box-shadow:
+      inset 0 2px 0 rgba(255, 255, 255, 0.9),
+      0 30px 60px -24px rgba(58, 43, 52, 0.38),
+      0 8px 18px -8px rgba(58, 43, 52, 0.18);
+    animation: settle 560ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  @keyframes settle {
+    from { opacity: 0; transform: translateY(26px) scale(0.97); }
+    to   { opacity: 1; transform: none; }
+  }
+  .screen {
+    position: relative;
+    height: 340px;
+    border-radius: 24px;
+    background: linear-gradient(160deg, var(--blossom-1) 0%, var(--blossom-2) 100%);
+    overflow: hidden;
+    box-shadow: inset 0 3px 12px rgba(192, 86, 122, 0.16), inset 0 0 0 1px rgba(192, 86, 122, 0.08);
+  }
+  .hud {
+    position: absolute; top: 10px; left: 12px; right: 12px;
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
+    pointer-events: none; z-index: 5;
+  }
+  .mood-pill {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-size: 0.78rem; font-weight: 700; color: var(--ink);
+    background: var(--tint-happy, #ffe3ea);
+    border: 1px solid rgba(58, 43, 52, 0.12);
+    border-radius: 999px; padding: 4px 12px;
+    transition: background 600ms ease;
+  }
+  .mood-pill .glyph { font-size: 0.85rem; }
+  .stat-strip { display: grid; gap: 4px 10px; grid-template-columns: repeat(2, 78px); }
+  .stat { display: grid; grid-template-columns: 26px 1fr; align-items: center; gap: 5px; }
+  .stat label { font-family: var(--font-mono); font-size: 0.56rem; font-weight: 700; letter-spacing: 0.04em; color: var(--ink-2); }
+  .stat .track { height: 6px; border-radius: 999px; background: rgba(58, 43, 52, 0.10); overflow: hidden; }
+  .stat .fill { height: 100%; width: 50%; border-radius: 999px; background: var(--ok); transition: width 700ms ease, background 400ms ease; }
+
+  .sprite { position: absolute; width: 150px; height: 150px; left: 50%; top: 58%; transform: translate(-50%, -50%); cursor: pointer; border: 0; padding: 0; background: none; transition: left 900ms ease, top 900ms ease; }
+  .sprite img { width: 100%; height: 100%; filter: none; transition: filter 600ms ease; }
+  .sprite.idle-anim img { animation: bob 3s ease-in-out infinite; }
+  .sprite.walk-anim img { animation: bob 0.6s ease-in-out infinite; }
+  .sprite.sleep-anim img { animation: breathe 3.4s ease-in-out infinite; }
+  @keyframes bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+  @keyframes breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.025); } }
+  .sprite:active img { transform: scale(0.94, 0.9); }
+
+  .bubble {
+    position: absolute; left: 50%; top: 10px; transform: translateX(-50%);
+    max-width: 78%;
+    background: #fff; color: var(--ink);
+    border: 1px solid var(--line-strong);
+    border-radius: 14px; border-bottom-left-radius: 4px;
+    padding: 7px 14px;
+    font-size: 0.85rem; font-weight: 600;
+    box-shadow: 0 8px 18px -10px rgba(58, 43, 52, 0.3);
+    opacity: 0; transform-origin: bottom left;
+    transition: opacity 200ms ease, scale 200ms ease;
+    z-index: 6;
+  }
+  .bubble.show { opacity: 1; scale: 1; }
+  .bubble:not(.show) { scale: 0.7; }
+
+  .particle { position: absolute; font-size: 15px; pointer-events: none; z-index: 4; animation: rise 1200ms ease-out both; }
+  @keyframes rise {
+    from { opacity: 1; transform: translate(0, 0) rotate(0); }
+    to   { opacity: 0; transform: translate(var(--dx, 0), -64px) rotate(var(--dr, 20deg)); }
+  }
+
+  .report {
+    position: absolute; inset: auto 12px 12px 12px;
+    background: rgba(255, 253, 247, 0.96);
+    border: 1px solid var(--line-strong);
+    border-radius: 14px; padding: 12px 14px;
+    font-size: 0.8rem; color: var(--ink-2);
+    box-shadow: 0 12px 26px -14px rgba(58, 43, 52, 0.4);
+    display: none;
+  }
+  .report.show { display: block; animation: pop 260ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+  @keyframes pop { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+  .report b { color: var(--ink); display: block; margin-bottom: 4px; font-size: 0.84rem; }
+  .report .row { display: flex; justify-content: space-between; font-family: var(--font-mono); font-size: 0.72rem; }
+  .report .note { margin-top: 6px; font-size: 0.72rem; color: var(--ink-3); }
+  .report button {
+    position: absolute; top: 8px; right: 8px; border: 0; background: none;
+    font-size: 0.9rem; color: var(--ink-2); cursor: pointer; padding: 4px; border-radius: 6px;
+  }
+  .report button:hover { color: var(--ink); background: var(--line); }
+
+  .speaker {
+    margin: 16px auto 12px; width: 64px; height: 8px;
+    background: radial-gradient(circle, rgba(58, 43, 52, 0.22) 1.3px, transparent 1.6px) 0 0 / 8px 8px;
+  }
+
+  .controls { display: flex; gap: 9px; justify-content: center; flex-wrap: wrap; }
+  .ctl {
+    position: relative;
+    display: inline-flex; align-items: center; gap: 7px;
+    font-family: var(--font-display); font-weight: 700; font-size: 0.92rem;
+    color: var(--ink);
+    background: linear-gradient(180deg, #ffffff, #fdf4ec);
+    border: 1px solid #e9d5c4; border-bottom-width: 3px;
+    border-radius: 14px;
+    padding: 9px 14px;
+    cursor: pointer;
+    transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
+  }
+  .ctl:hover { border-color: var(--pink); background: #fff; }
+  .ctl:active, .ctl.pressed { transform: translateY(2px); border-bottom-width: 1px; }
+  .ctl:disabled { opacity: 0.55; cursor: wait; }
+  .ctl .ico { font-size: 1rem; }
+  .ctl-report { border-style: dashed; border-bottom-width: 3px; color: var(--ink-2); }
+
+  .tray {
+    position: absolute; bottom: 78px; left: 50%; transform: translateX(-50%);
+    display: none; gap: 8px;
+    background: rgba(255, 253, 247, 0.97);
+    border: 1px solid var(--line-strong);
+    border-radius: 14px; padding: 8px;
+    box-shadow: 0 16px 32px -14px rgba(58, 43, 52, 0.4);
+    z-index: 8;
+  }
+  .tray.open { display: flex; animation: pop 200ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+  .tray .ctl { padding: 8px 12px; font-size: 0.86rem; }
+
+  .device-caption { font-size: 0.85rem; color: var(--ink-2); text-align: center; max-width: 40ch; }
+  .device-caption code { font-family: var(--font-mono); font-size: 0.78rem; color: var(--pink-deep); }
+
+  /* ------------------------------------------------------------------ */
+  /* Quickstart                                                         */
+  /* ------------------------------------------------------------------ */
+  .terminal {
+    background: #241d2b;
+    border-radius: var(--radius);
+    border: 1px solid #382c44;
+    box-shadow: var(--shadow-card);
+    overflow: hidden;
+    max-width: 760px;
+  }
+  .terminal .bar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 9px 14px; border-bottom: 1px solid #382c44;
+    font-family: var(--font-mono); font-size: 0.72rem; color: #b9aed1;
+  }
+  .terminal pre {
+    margin: 0; padding: 18px 20px;
+    font-family: var(--font-mono); font-size: 0.86rem; line-height: 1.85;
+    color: #efe7f7; overflow-x: auto;
+  }
+  .terminal .p { color: #ff9ab8; user-select: none; }
+  .terminal .c { color: #8d7fa3; }
+  .copy {
+    border: 1px solid #4a3a58; background: transparent; color: #b9aed1;
+    font-family: var(--font-mono); font-size: 0.68rem; font-weight: 700;
+    border-radius: 8px; padding: 4px 10px; cursor: pointer;
+  }
+  .copy:hover { color: #fff; border-color: var(--pink); }
+  .req-note { color: var(--ink-2); font-size: 0.9rem; margin-top: 14px; max-width: 62ch; }
+  .req-note code { font-family: var(--font-mono); font-size: 0.8rem; color: var(--pink-deep); }
+
+  /* ------------------------------------------------------------------ */
+  /* Proof                                                              */
+  /* ------------------------------------------------------------------ */
+  .stat-rule {
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    border-top: 2px solid var(--ink); border-bottom: 1px solid var(--line);
+    margin: 34px 0 38px;
+  }
+  .stat-rule > div { padding: 18px 8px 16px; }
+  .stat-rule > div + div { border-left: 1px solid var(--line); }
+  .stat-rule .n { font-family: var(--font-display); font-weight: 800; font-size: 1.9rem; letter-spacing: -0.02em; }
+  .stat-rule .l { font-family: var(--font-mono); font-size: 0.7rem; color: var(--ink-2); }
+
+  .arch { width: 100%; border-collapse: collapse; font-size: 0.94rem; }
+  .arch caption { text-align: left; font-family: var(--font-display); font-weight: 700; font-size: 1.05rem; padding-bottom: 12px; }
+  .arch th, .arch td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .arch th { font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.05em; color: var(--ink-2); font-weight: 700; }
+  .arch td:first-child { font-weight: 700; white-space: nowrap; }
+  .arch td code { font-family: var(--font-mono); font-size: 0.82rem; color: var(--pink-deep); }
+  .arch td span { color: var(--ink-2); }
+
+  /* ------------------------------------------------------------------ */
+  /* Mood system                                                        */
+  /* ------------------------------------------------------------------ */
+  .moods { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 34px; }
+  .mood-cell {
+    display: grid; grid-template-columns: 64px 1fr; gap: 14px; align-items: center;
+    border: 1px solid var(--line);
+    background: rgba(255, 255, 255, 0.55);
+    border-radius: var(--radius);
+    padding: 14px;
+    transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+  }
+  .mood-cell:hover, .mood-cell:focus-within {
+    transform: translateY(-3px);
+    box-shadow: 0 14px 30px -16px rgba(58, 43, 52, 0.3);
+    border-color: var(--line-strong);
+  }
+  .mood-cell img { width: 64px; height: 64px; }
+  .mood-cell .name { font-family: var(--font-display); font-weight: 700; font-size: 1rem; display: flex; align-items: center; gap: 8px; }
+  .mood-cell .name .dot { width: 12px; height: 12px; border-radius: 999px; border: 1px solid rgba(58, 43, 52, 0.18); }
+  .mood-cell .pred { font-family: var(--font-mono); font-size: 0.72rem; color: var(--pink-deep); margin-top: 2px; }
+  .mood-cell p { margin: 4px 0 0; font-size: 0.85rem; color: var(--ink-2); }
+
+  /* ------------------------------------------------------------------ */
+  /* Pose catalogue                                                     */
+  /* ------------------------------------------------------------------ */
+  .poses {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+    gap: 10px;
+    margin-top: 34px;
+  }
+  .pose {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.6);
+    padding: 12px 6px 8px;
+    text-align: center;
+    transition: transform 150ms ease, box-shadow 150ms ease, border-color 150ms ease;
+  }
+  .pose:hover, .pose:focus-visible {
+    transform: translateY(-4px);
+    box-shadow: 0 12px 24px -12px rgba(58, 43, 52, 0.3);
+    border-color: var(--line-strong);
+  }
+  .pose img { width: 72px; height: 72px; margin: 0 auto; }
+  .pose .code { font-family: var(--font-mono); font-size: 0.6rem; color: var(--ink-3); margin-top: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* ------------------------------------------------------------------ */
+  /* LLM                                                                */
+  /* ------------------------------------------------------------------ */
+  .llm-grid { display: grid; grid-template-columns: 1.1fr 1fr; gap: 40px; align-items: start; margin-top: 34px; }
+  .gate { border-left: none; list-style: none; padding: 0; margin: 0; }
+  .gate li { padding: 13px 0 13px 34px; position: relative; border-bottom: 1px solid var(--line); }
+  .gate li:first-child { border-top: 1px solid var(--line); }
+  .gate li::before {
+    content: "✓"; position: absolute; left: 2px; top: 12px;
+    font-weight: 800; color: var(--ok);
+  }
+  .gate b { display: block; }
+  .gate span { color: var(--ink-2); font-size: 0.9rem; }
+  .gate code { font-family: var(--font-mono); font-size: 0.8rem; color: var(--pink-deep); }
+
+  /* ------------------------------------------------------------------ */
+  /* Sandbox (night stage)                                              */
+  /* ------------------------------------------------------------------ */
+  .sandbox {
+    background: linear-gradient(160deg, var(--night-1) 0%, var(--night-2) 100%);
+    color: var(--night-text, #efe7f7);
+    border-radius: 28px;
+    padding: 56px clamp(24px, 5vw, 64px);
+    box-shadow: 0 30px 70px -30px rgba(28, 23, 48, 0.7);
+  }
+  .sandbox h2 { color: #fff; }
+  .sandbox .sub { color: #b9aed1; }
+  .sandbox-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-top: 36px; align-items: start; }
+  .tree {
+    font-family: var(--font-mono); font-size: 0.82rem; line-height: 1.9;
+    background: rgba(12, 9, 22, 0.55);
+    border: 1px solid #3d3155;
+    border-radius: 14px;
+    padding: 18px 20px;
+    color: #d9cff0;
+    overflow-x: auto;
+  }
+  .tree .dir { color: #8fd0a8; font-weight: 700; }
+  .tree .arrow { color: #6b5d88; }
+  .tree .cm { color: #6b5d88; }
+  .rules { list-style: none; margin: 0; padding: 0; }
+  .rules li { padding: 12px 0 12px 30px; position: relative; border-bottom: 1px solid #3d3155; color: #d9cff0; font-size: 0.95rem; }
+  .rules li:first-child { border-top: 1px solid #3d3155; }
+  .rules li::before { content: "⌈"; position: absolute; left: 4px; color: var(--pink); font-weight: 800; }
+  .rules code { font-family: var(--font-mono); font-size: 0.8rem; color: #ff9ab8; }
+
+  /* ------------------------------------------------------------------ */
+  /* Roadmap + close                                                    */
+  /* ------------------------------------------------------------------ */
+  .roadmap { list-style: none; padding: 0; margin: 26px 0 0; display: flex; flex-wrap: wrap; gap: 10px; }
+  .roadmap li {
+    font-size: 0.9rem; color: var(--ink-2);
+    border: 1px dashed var(--line-strong);
+    border-radius: 999px; padding: 6px 16px;
+  }
+  .close { text-align: center; padding-top: 110px; padding-bottom: 90px; }
+  .close blockquote {
+    font-family: var(--font-display); font-weight: 800;
+    font-size: clamp(1.6rem, 3.6vw, 2.6rem); letter-spacing: -0.02em;
+    margin: 0 auto; max-width: 22ch; line-height: 1.2;
+  }
+  .close cite { display: block; margin-top: 18px; font-style: normal; font-family: var(--font-mono); font-size: 0.78rem; color: var(--ink-2); }
+  .close .star-cta { margin-top: 34px; }
+
+  footer { border-top: 1px solid var(--line); padding: 26px 0 40px; color: var(--ink-2); font-size: 0.86rem; }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 8px 22px; justify-content: center; }
+
+  .noscript { padding: 14px; text-align: center; background: var(--tint-hungry); }
+
+  /* ------------------------------------------------------------------ */
+  /* Responsive                                                         */
+  /* ------------------------------------------------------------------ */
+  @media (max-width: 1020px) {
+    .hero-grid { grid-template-columns: 1fr; text-align: center; }
+    .hero .lede { margin-left: auto; margin-right: auto; }
+    .meta-row, .hero-cta { justify-content: center; }
+    .claims { text-align: left; max-width: 520px; margin: 0 auto; }
+    .device-col { order: -1; }
+    .llm-grid, .sandbox-grid { grid-template-columns: 1fr; }
+    .moods { grid-template-columns: repeat(2, 1fr); }
+    .stat-rule { grid-template-columns: repeat(2, 1fr); }
+    .stat-rule > div:nth-child(3) { border-left: 0; }
+    .stat-rule > div:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
+  }
+  @media (max-width: 560px) {
+    section { padding: 64px 0; }
+    .nav nav a { display: none; }
+    .screen { height: 300px; }
+    .sprite { width: 120px; height: 120px; }
+    .moods { grid-template-columns: 1fr; }
+    .stat-strip { grid-template-columns: 78px; }
+    .arch { display: block; overflow-x: auto; white-space: nowrap; }
+    .arch caption { white-space: normal; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+    html { scroll-behavior: auto; }
+  }
+</style>
+</head>
+<body>
+<!--
+  DIRECTION CONTRACT — seed 0c678df3, code-led
+  THESIS: The landing is the toy itself: a working, oversized Mochi device
+  whose simulation runs live in the hero — proof, not promises.
+  OWN-WORLD: The app's own stage gradients (cream page, blossom screen,
+  night sandbox panel), ink #3a2b34, pink #ff7aa1, Baloo 2 display,
+  real sprite art everywhere, 16px card radius, ruled tables over cards.
+  STORY: A developer sees the pet alive before reading a word, plays with
+  the real sim, then reads privacy-first proof, the mood system, every
+  hand-drawn pose, and clones from an honest quickstart.
+  FIRST VIEWPORT: Three-column hero — pitch left, the device center with
+  live sprite + working Feed/Play/Pat/Rest buttons, four claims right.
+  FORM: The Device, dealt index 5 of the grounded surface list.
+  FINISH: unreviewed and undocumented is unfinished; this build ends with
+  the finish review, the verdict, DESIGN.md, and every shipping raster
+  carrying its provenance.
+-->
+<noscript><p class="noscript" data-i18n="noscript">The live pet demo needs JavaScript — everything else on this page still reads fine without it.</p></noscript>
+
+<header>
+  <div class="wrap nav">
+    <a class="wordmark" href="#top">
+      <img src="assets/sprites/mochi-idle-t.webp" alt="" width="30" height="30" />
+      Pet Mochi
+    </a>
+    <nav aria-label="Sections">
+      <a href="#quickstart" data-i18n="nav.quickstart">Quickstart</a>
+      <a href="#hood" data-i18n="nav.hood">Under the hood</a>
+      <a href="#poses" data-i18n="nav.poses">Poses</a>
+      <a class="gh" href="https://github.com/cskwork/pet-mochi" target="_blank" rel="noopener">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        GitHub
+      </a>
+      <button class="lang-btn" id="langBtn" type="button" aria-label="언어 전환 / Switch language">한국어</button>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+
+  <!-- ================= HERO ================= -->
+  <section class="hero wrap" aria-label="Introduction">
+    <div class="hero-grid">
+      <div>
+        <h1 data-i18n="hero.h1">A local-first AI pet that lives on your desktop.</h1>
+        <p class="lede" data-i18n="hero.lede">Mochi moves on her own, remembers what matters, and chats briefly through an optional local LLM. Fully offline. No accounts. No cloud. No telemetry.</p>
+        <div class="meta-row" aria-label="Project facts">
+          <span class="chip">MIT</span>
+          <span class="chip">Tauri 2</span>
+          <span class="chip">Svelte 5</span>
+          <span class="chip">Rust</span>
+          <span class="chip" data-i18n="hero.tests">292 tests</span>
+        </div>
+        <div class="hero-cta">
+          <a class="btn btn-primary" href="#quickstart">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
+            <span data-i18n="hero.clone">Clone &amp; run</span>
+          </a>
+          <a class="btn btn-ghost" href="https://github.com/cskwork/pet-mochi" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+            <span data-i18n="hero.star">Star the repo</span>
+          </a>
+        </div>
+      </div>
+
+      <div class="device-col">
+        <div class="device" id="device">
+          <div class="screen" id="screen">
+            <div class="hud">
+              <span class="mood-pill" id="moodPill"><span class="glyph" id="moodGlyph">✿</span><span id="moodWord">happy</span></span>
+              <div class="stat-strip" aria-label="Live simulation stats" data-i18n-attr="aria-label:stats.aria">
+                <div class="stat"><label for="barHun">HUN</label><div class="track"><div class="fill" id="barHun" role="meter" aria-valuemin="0" aria-valuemax="100"></div></div></div>
+                <div class="stat"><label for="barEng">ENG</label><div class="track"><div class="fill" id="barEng" role="meter" aria-valuemin="0" aria-valuemax="100"></div></div></div>
+                <div class="stat"><label for="barBrd">BRD</label><div class="track"><div class="fill" id="barBrd" role="meter" aria-valuemin="0" aria-valuemax="100"></div></div></div>
+                <div class="stat"><label for="barAff">AFF</label><div class="track"><div class="fill" id="barAff" role="meter" aria-valuemin="0" aria-valuemax="100"></div></div></div>
+              </div>
+            </div>
+            <p class="bubble" id="bubble" aria-live="polite"></p>
+            <button class="sprite idle-anim" id="sprite" type="button" aria-label="Mochi. Pat her." title="Pat Mochi" data-i18n-attr="aria-label:sprite.aria;title:sprite.title">
+              <img id="spriteImg" src="assets/sprites/mochi-idle.webp" alt="Mochi idling, happy" width="150" height="150" draggable="false" />
+            </button>
+            <div class="report" id="report" role="status"></div>
+          </div>
+          <div class="speaker" aria-hidden="true"></div>
+          <div class="controls">
+            <button class="ctl" id="btnFeed" type="button" aria-haspopup="menu" aria-expanded="false" title="Give Mochi a treat" data-i18n-attr="title:ctl.feed.title">
+              <span class="ico" aria-hidden="true">🍡</span><span data-i18n="ctl.feed">Feed</span>
+            </button>
+            <button class="ctl" id="btnPlay" type="button" title="Play together" data-i18n-attr="title:ctl.play.title">
+              <span class="ico" aria-hidden="true">🎾</span><span data-i18n="ctl.play">Play</span>
+            </button>
+            <button class="ctl" id="btnPet" type="button" title="Pat Mochi" data-i18n-attr="title:ctl.pet.title">
+              <span class="ico" aria-hidden="true">✋</span><span data-i18n="ctl.pet">Pat</span>
+            </button>
+            <button class="ctl" id="btnRest" type="button" title="Let Mochi nap" data-i18n-attr="title:ctl.rest.title">
+              <span class="ico" aria-hidden="true">💤</span><span data-i18n="ctl.rest">Rest</span>
+            </button>
+            <button class="ctl ctl-report" id="btnReport" type="button" title="Write a deterministic status report" data-i18n-attr="title:ctl.report.title">
+              <span class="ico" aria-hidden="true">📝</span><span data-i18n="ctl.report">Report</span>
+            </button>
+          </div>
+          <div class="tray" id="snackTray" role="menu" aria-label="Snacks" data-i18n-attr="aria-label:tray.aria">
+            <button class="ctl" data-snack="dango" type="button" role="menuitem"><span class="ico" aria-hidden="true">🍡</span><span data-i18n="snack.dango">Dango</span></button>
+            <button class="ctl" data-snack="strawberry" type="button" role="menuitem"><span class="ico" aria-hidden="true">🍓</span><span data-i18n="snack.strawberry">Strawberry</span></button>
+            <button class="ctl" data-snack="cookie" type="button" role="menuitem"><span class="ico" aria-hidden="true">🍪</span><span data-i18n="snack.cookie">Cookie</span></button>
+          </div>
+        </div>
+        <p class="device-caption"><span data-i18n="cap1">This is the real simulation — every</span> <code>3&nbsp;s</code> <span data-i18n="cap2">tick runs the same pure decay, mood and movement rules the desktop app runs.</span> <a class="more" href="#hood" data-i18n="cap3">How it works&nbsp;↓</a></p>
+      </div>
+
+      <div>
+        <ul class="claims">
+          <li><b data-i18n="claim1.b">Alive without the LLM.</b><span data-i18n="claim1.s">A deterministic local simulation drives mood, needs, movement and sleep — every 3 seconds, all day, no network calls.</span></li>
+          <li><b data-i18n="claim2.b">The LLM only speaks at salience moments.</b><span data-i18n="claim2.s">Short greetings and reflections, behind a salience gate and hard cooldowns. No spam, no surprise bills.</span></li>
+          <li><b data-i18n="claim3.b">Memory you can read and delete.</b><span data-i18n="claim3.s">SQLite + FTS5, ranked by importance × recency × confidence. Export to Markdown anytime.</span></li>
+          <li><b data-i18n="claim4.b">Sandbox by default.</b><span data-i18n="claim4.s">She reads only what you drop into her inbox, only after explicit per-file consent — never your filesystem at large.</span></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= QUICKSTART ================= -->
+  <section class="wrap" id="quickstart" aria-labelledby="qs-h">
+    <h2 id="qs-h" data-i18n="qs.h">Clone it and meet her</h2>
+    <p class="sub" data-i18n="qs.sub">No installers yet — the honest path is clone-and-run. She’s happy in silent mode; the chat is optional.</p>
+    <div class="terminal" style="margin-top:30px">
+      <div class="bar"><span data-i18n="qs.term">quickstart</span><button class="copy" id="copyBtn" type="button" data-i18n="copy">copy</button></div>
+      <pre id="cmdBlock"><span class="p">$</span> git clone https://github.com/cskwork/pet-mochi.git
+<span class="p">$</span> cd pet-mochi
+<span class="p">$</span> npm install
+<span class="p">$</span> npm run tauri:dev <span class="c"># launches the desktop pet</span></pre>
+    </div>
+    <p class="req-note"><span data-i18n="qs.req1">Requirements: Node ≥ 20, Rust ≥ 1.77, Windows / macOS / Linux. Optional:</span> <a href="https://ollama.com/" target="_blank" rel="noopener">Ollama</a> <span data-i18n="qs.req2">with a small model for chat replies —</span> <code>ollama pull gemma4:e2b</code><span data-i18n="qs.req3">, then Settings → provider</span> <code>ollama</code>.</p>
+  </section>
+
+  <!-- ================= PROOF ================= -->
+  <section class="wrap" id="hood" aria-labelledby="hood-h">
+    <h2 id="hood-h" data-i18n="hood.h">Under the hood</h2>
+    <p class="sub" data-i18n="hood.sub">Cute surface, rigorous underneath. The pet is a simulation first — the LLM is seasoning, not the meal.</p>
+    <div class="stat-rule">
+      <div><div class="n">292</div><div class="l" data-i18n="hood.s1">tests passing</div></div>
+      <div><div class="n">113</div><div class="l" data-i18n="hood.s2">PRD requirements tracked</div></div>
+      <div><div class="n">3&nbsp;s</div><div class="l" data-i18n="hood.s3">simulation tick, fully offline</div></div>
+      <div><div class="n">0</div><div class="l" data-i18n="hood.s4">network calls by default</div></div>
+    </div>
+    <table class="arch">
+      <caption data-i18n="hood.cap">Every layer, and what it actually does</caption>
+      <thead><tr><th scope="col" data-i18n="hood.th1">Layer</th><th scope="col" data-i18n="hood.th2">Tech</th><th scope="col" data-i18n="hood.th3">Role</th></tr></thead>
+      <tbody>
+        <tr><td data-i18n="hood.r1c1">Desktop shell</td><td><code>Tauri 2</code></td><td><span data-i18n="hood.r1c3">Transparent, always-on-top, draggable overlay.</span></td></tr>
+        <tr><td data-i18n="hood.r2c1">UI</td><td><code>Svelte 5 + TypeScript</code></td><td><span data-i18n="hood.r2c3">PNG sprite + CSS animation, no extra renderer.</span></td></tr>
+        <tr><td data-i18n="hood.r3c1">Simulation engine</td><td><code>TypeScript pure functions</code></td><td><span data-i18n="hood.r3c3">Mood, decay, movement — testable, no LLM required.</span></td></tr>
+        <tr><td data-i18n="hood.r4c1">Memory engine</td><td><code>Rust + rusqlite + FTS5</code></td><td><span data-i18n="hood.r4c3">Durable memories, prefix search, weighted ranking.</span></td></tr>
+        <tr><td data-i18n="hood.r5c1">LLM adapter</td><td><code>Rust + reqwest</code></td><td><span data-i18n="hood.r5c3">Pluggable LlmProvider trait; Ollama is the first implementation.</span></td></tr>
+        <tr><td data-i18n="hood.r6c1">Sandbox</td><td><code>Rust</code></td><td><span data-i18n="hood.r6c3">Inbox watcher, path-jail safe IO, declarative skills.</span></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ================= MOODS ================= -->
+  <section class="wrap" aria-labelledby="mood-h">
+    <h2 id="mood-h" data-i18n="mood.h">Six moods you can read at a glance</h2>
+    <p class="sub" data-i18n="mood.sub">Hidden stats decay every tick; the first matching rule wins. A color tint plus a distinguishing glyph keeps similar tones apart — watch them drift live in the device above.</p>
+    <div class="moods">
+      <div class="mood-cell"><img src="assets/sprites/mochi-idle-t.webp" alt="" data-i18n-attr="alt:mood.tired.alt" loading="lazy" width="64" height="64" style="filter: hue-rotate(25deg) saturate(0.7) brightness(0.96)" /><div><div class="name"><span data-i18n="mood.tired">Tired</span> <span class="dot" style="background:#e8dcea"></span></div><div class="pred">energy &lt; 20</div><p data-i18n="mood.tired.d">She finds a quiet corner and sleeps it off.</p></div></div>
+      <div class="mood-cell"><img src="assets/sprites/mochi-idle-t.webp" alt="" data-i18n-attr="alt:mood.hungry.alt" loading="lazy" width="64" height="64" style="filter: hue-rotate(-22deg) saturate(1.18)" /><div><div class="name"><span data-i18n="mood.hungry">Hungry</span> <span class="dot" style="background:#ffe0cc"></span></div><div class="pred">hunger &gt; 75</div><p data-i18n="mood.hungry.d">The 🍡 glyph appears; the snack tray starts looking interesting.</p></div></div>
+      <div class="mood-cell"><img src="assets/sprites/mochi-idle-t.webp" alt="" data-i18n-attr="alt:mood.bored.alt" loading="lazy" width="64" height="64" style="filter: saturate(0.45) brightness(0.97)" /><div><div class="name"><span data-i18n="mood.bored">Bored</span> <span class="dot" style="background:#e2e8ee"></span></div><div class="pred">boredom &gt; 70</div><p data-i18n="mood.bored.d">Wanders off to explore — the “…” glyph gives it away.</p></div></div>
+      <div class="mood-cell"><img src="assets/sprites/mochi-idle-t.webp" alt="" data-i18n-attr="alt:mood.lonely.alt" loading="lazy" width="64" height="64" style="filter: hue-rotate(40deg) saturate(0.78) brightness(0.95)" /><div><div class="name"><span data-i18n="mood.lonely">Lonely</span> <span class="dot" style="background:#d9d2ea"></span></div><div class="pred">affection &lt; 20</div><p data-i18n="mood.lonely.d">A ♡ asks for a pat. She never guilt-trips, only hopes.</p></div></div>
+      <div class="mood-cell"><img src="assets/sprites/mochi-idle-t.webp" alt="" data-i18n-attr="alt:mood.curious.alt" loading="lazy" width="64" height="64" style="filter: hue-rotate(-12deg) saturate(1.08)" /><div><div class="name"><span data-i18n="mood.curious">Curious</span> <span class="dot" style="background:#fff1d6"></span></div><div class="pred">curiosity &gt; 70</div><p data-i18n="mood.curious.d">A “?” floats up when something novel is nearby.</p></div></div>
+      <div class="mood-cell"><img src="assets/sprites/mochi-idle-t.webp" alt="" data-i18n-attr="alt:mood.happy.alt" loading="lazy" width="64" height="64" /><div><div class="name"><span data-i18n="mood.happy">Happy</span> <span class="dot" style="background:#ffe3ea"></span></div><div class="pred" data-i18n="mood.otherwise">otherwise</div><p data-i18n="mood.happy.d">The default. Idle quirks, wiggles, and the occasional celebrate.</p></div></div>
+    </div>
+  </section>
+
+  <!-- ================= POSES ================= -->
+  <section class="wrap" id="poses" aria-labelledby="poses-h">
+    <h2 id="poses-h" data-i18n="poses.h">Every pose is hand-drawn</h2>
+    <p class="sub"><span data-i18n="poses.sub1">28 sprites, one character, each with its own CSS motion in the app — plus per-mood color tints layered on top. These are the real files, straight from</span> <code style="font-family:var(--font-mono);font-size:0.85em;color:var(--pink-deep)">public/sprites/</code>.</p>
+    <div class="poses" id="poseGrid"></div>
+  </section>
+
+  <!-- ================= LLM ================= -->
+  <section class="wrap" aria-labelledby="llm-h">
+    <h2 id="llm-h" data-i18n="llm.h">Optional: give her a voice</h2>
+    <p class="sub" data-i18n="llm.sub">Mochi is silent by default and fine with it. With a local Ollama model she adds short, mood-aware, in-character replies — and the leash stays short.</p>
+    <div class="llm-grid">
+      <div class="terminal">
+        <div class="bar"><span data-i18n="llm.term">talking to mochi</span><button class="copy copy2" type="button" data-i18n="copy">copy</button></div>
+        <pre><span class="p">$</span> ollama pull gemma4:e2b
+<span class="c"># then: Settings → provider: ollama</span>
+<span class="c"># endpoint: http://localhost:11434</span></pre>
+      </div>
+      <ul class="gate">
+        <li><b data-i18n="llm.g1b">Salience-gated, cooldown-capped.</b><span><span data-i18n="llm.g1s1">An event must clear salience</span> <code>≥ 70</code> <em data-i18n="llm.g1s2">and</em> <span data-i18n="llm.g1s3">wait out a</span> <code>90 s</code> <span data-i18n="llm.g1s4">autonomous cooldown. No care action alone reaches the gate — Play is 40, Feed 35, Rest 25, Pat 20.</span></span></li>
+        <li><b data-i18n="llm.g2b">Memory before words.</b><span data-i18n="llm.g2s">Relevant memories are retrieved and re-ranked by 0.4·importance + 0.3·recency + 0.3·confidence, so old-but-important beats fresh trivia.</span></li>
+        <li><b data-i18n="llm.g3b">Failure is graceful.</b><span data-i18n="llm.g3s">Ollama offline, DB unavailable, garbled extraction — the pet keeps animating. Failures log warnings, never bubble up.</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ================= SANDBOX ================= -->
+  <section class="wrap" aria-labelledby="sandbox-h">
+    <div class="sandbox">
+      <h2 id="sandbox-h" data-i18n="sb.h">Her whole world is one folder</h2>
+      <p class="sub"><span data-i18n="sb.sub1">A path-jailed sandbox (canonicalized, verified, no</span> <code style="color:#ff9ab8">..</code><span data-i18n="sb.sub2">, no absolute escapes, no symlinks that resolve outside). Want her somewhere else? Point</span> <code style="color:#ff9ab8">MOCHI_HOME</code> <span data-i18n="sb.sub3">at it.</span></p>
+      <div class="sandbox-grid">
+        <pre class="tree" aria-label="Pet home folder layout" data-i18n-attr="aria-label:sb.tree.aria">pet-mochi/
+├─ <span class="dir">inbox/</span>   <span class="arrow">←</span> <span data-i18n="sb.tree1">drop .txt / .md / .json here</span>
+├─ <span class="dir">notes/</span>   <span class="arrow">←</span> <span data-i18n="sb.tree2">she writes summaries</span>
+├─ <span class="dir">dreams/</span>  <span class="arrow">←</span> <span data-i18n="sb.tree3">daily reflections</span>
+├─ <span class="dir">exports/</span> <span class="arrow">←</span> <span data-i18n="sb.tree4">memory exports</span>
+└─ mochi.db   <span class="cm"># SQLite memory + state</span></pre>
+        <ul class="rules">
+          <li data-i18n="sb.r1">Reads only from <code>inbox/</code>, and only after explicit per-file consent.</li>
+          <li data-i18n="sb.r2">Writes only to <code>notes/</code>, <code>dreams/</code>, <code>exports/</code>.</li>
+          <li data-i18n="sb.r3">No shell, no <code>eval</code>, no remote skill loading — ever.</li>
+          <li data-i18n="sb.r4">Every path is canonicalized and jailed before any read or write.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= ROADMAP ================= -->
+  <section class="wrap" aria-labelledby="road-h">
+    <h2 id="road-h" data-i18n="road.h">Coming next — clearly not shipped yet</h2>
+    <ul class="roadmap">
+      <li data-i18n="road.1">Voice (opt-in)</li>
+      <li data-i18n="road.2">Custom skins</li>
+      <li data-i18n="road.3">Live2D / VRM</li>
+      <li data-i18n="road.4">Git &amp; test-runner watcher</li>
+      <li data-i18n="road.5">Local embedding memory search</li>
+      <li data-i18n="road.6">Multiple pets</li>
+      <li data-i18n="road.7">Wardrobe &amp; growth stages</li>
+    </ul>
+  </section>
+
+  <!-- ================= CLOSE ================= -->
+  <section class="close wrap" aria-label="Closing thought">
+    <blockquote>“The pet must feel alive even when the LLM is off.”</blockquote>
+    <cite data-i18n="close.cite">— Project North Star, PRD §1</cite>
+    <div class="star-cta">
+      <a class="btn btn-primary" href="https://github.com/cskwork/pet-mochi" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+        <span data-i18n="close.star">If she made your day nicer, star the repo</span>
+      </a>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span data-i18n="foot.lic">Pet Mochi — MIT license.</span>
+    <a href="https://github.com/cskwork/pet-mochi" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://github.com/cskwork/pet-mochi/issues" target="_blank" rel="noopener">Issues</a>
+    <a href="https://github.com/cskwork/pet-mochi/blob/main/PRD.md" target="_blank" rel="noopener">PRD</a>
+    <span data-i18n="foot.art">28 hand-drawn poses · Sprites drawn for this project.</span>
+  </div>
+</footer>
+
+<script>
+/* =====================================================================
+   Live demo — a faithful port of src/lib/sim (decay, mood, movement,
+   actions). Rates, thresholds, bubbles and animation beats are copied
+   from the app so this demo tells the truth.
+   ===================================================================== */
+(function () {
+  "use strict";
+
+  /* ===================================================================
+     i18n — auto-detect from navigator.language, manual toggle in header.
+     English is snapshotted from the DOM at boot; Korean lives in KO below.
+     =================================================================== */
+  var KO = {
+    "nav.quickstart": "시작하기", "nav.hood": "내부 구조", "nav.poses": "포즈",
+    "hero.h1": "데스크톱 위에 사는 로컬-퍼스트 AI 펫.",
+    "hero.lede": "모치는 스스로 움직이고, 중요한 건 기억하고, 원할 때만 로컬 LLM으로 짧게 대화해요. 완전 오프라인. 계정 없음. 클라우드 없음. 추적 없음.",
+    "hero.tests": "292개 테스트",
+    "hero.clone": "클론해서 실행", "hero.star": "GitHub 스타",
+    "claim1.b": "LLM 없이도 살아 있어요.",
+    "claim1.s": "결정론적 로컬 시뮬레이션이 기분·욕구·이동·수면을 구동해요 — 3초마다, 하루 종일, 네트워크 호출 없이.",
+    "claim2.b": "LLM은 꼭 필요한 순간에만 말해요.",
+    "claim2.s": "짧은 인사와 회고만, 살리언스 게이트와 쿨다운 뒤에서요. 스팸도, 깜짝 청구서도 없어요.",
+    "claim3.b": "읽고 지울 수 있는 기억.",
+    "claim3.s": "SQLite + FTS5, 중요도 × 최신성 × 신뢰도로 정렬. 언제든 Markdown으로 내보내기.",
+    "claim4.b": "샌드박스가 기본이에요.",
+    "claim4.s": "모치는 동의를 받은 파일만 inbox/에서 읽어요 — 파일시스템 전체는 건드리지 않아요.",
+    "stats.aria": "실시간 시뮬레이션 상태",
+    "sprite.aria": "모치. 쓰다듬어 보세요.", "sprite.title": "모치 쓰다듬기",
+    "ctl.feed": "먹이", "ctl.play": "놀이", "ctl.pet": "쓰다듬기", "ctl.rest": "재우기", "ctl.report": "리포트",
+    "ctl.feed.title": "모치에게 간식 주기", "ctl.play.title": "같이 놀기", "ctl.pet.title": "모치 쓰다듬기",
+    "ctl.rest.title": "모치 재우기", "ctl.report.title": "결정적 상태 리포트 쓰기",
+    "tray.aria": "간식", "snack.dango": "당고", "snack.strawberry": "딸기", "snack.cookie": "쿠키",
+    "cap1": "이건 진짜 시뮬레이션이에요 —", "cap2": "마다 데스크톱 앱과 같은 순수 함수로 감쇠·기분·이동 규칙을 돌려요.",
+    "cap3": "어떻게 동작하나 ↓",
+    "qs.h": "클론해서 만나보세요",
+    "qs.sub": "아직 설치 파일은 없어요 — 클론해서 바로 실행하는 게 정직한 방법이에요. 모치는 무음 모드에서도 행복하고, 대화는 선택이에요.",
+    "qs.term": "빠른 시작", "copy": "복사",
+    "qs.req1": "요구 사항: Node ≥ 20, Rust ≥ 1.77, Windows / macOS / Linux. 선택:", "qs.req2": "채팅을 원하면 가벼운 모델의", "qs.req3": ", 그다음 Settings → provider",
+    "hood.h": "내부 구조",
+    "hood.sub": "귀여운 표면, 그 아래는 단단한 엔지니어링. 펫은 시뮬레이션이 먼저 — LLM은 양념이지 요리가 아니에요.",
+    "hood.s1": "테스트 통과", "hood.s2": "PRD 요구사항 추적", "hood.s3": "시뮬레이션 틱, 완전 오프라인", "hood.s4": "기본 네트워크 호출",
+    "hood.cap": "모든 레이어와 실제 역할",
+    "hood.th1": "레이어", "hood.th2": "기술", "hood.th3": "역할",
+    "hood.r1c1": "데스크톱 셸", "hood.r1c3": "투명하고 항상 위에 떠 있는, 드래그 가능한 오버레이.",
+    "hood.r2c1": "UI", "hood.r2c3": "PNG 스프라이트 + CSS 애니메이션, 추가 렌더러 없음.",
+    "hood.r3c1": "시뮬레이션 엔진", "hood.r3c3": "기분·감쇠·이동 — 테스트 가능, LLM 불필요.",
+    "hood.r4c1": "기억 엔진", "hood.r4c3": "durable한 기억, 접두사 검색, 가중 랭킹.",
+    "hood.r5c1": "LLM 어댑터", "hood.r5c3": "플러그형 LlmProvider 트레이트; 첫 구현은 Ollama.",
+    "hood.r6c1": "샌드박스", "hood.r6c3": "inbox 감시자, 경로 감옥 안전 IO, 선언적 스킬.",
+    "mood.h": "한눈에 읽히는 여섯 가지 기분",
+    "mood.sub": "숨은 스탯이 매 틱 감쇠하고, 첫 번째로 맞는 규칙이 이겨요. 색 틴트와 알아보기 쉬운 글리프가 비슷한 톤을 구분해 줘요 — 위 기기에서 실시간으로 바뀌는 걸 보세요.",
+    "mood.otherwise": "그 외",
+    "mood.tired": "피곤", "mood.tired.d": "조용한 구석을 찾아 가서 잠들어요.",
+    "mood.hungry": "배고픔", "mood.hungry.d": "🍡 글리프가 뜨고, 간식 트레이가 눈에 들어오기 시작해요.",
+    "mood.bored": "심심", "mood.bored.d": "탐험하러 떠나요 — “…” 글리프가 알려줘요.",
+    "mood.lonely": "외로움", "mood.lonely.d": "♡가 쓰다듬어 달라고 할래요. 죄책감을 주지 않아요, 그냥 바랄 뿐이에요.",
+    "mood.curious": "궁금", "mood.curious.d": "새로운 게 가까우면 “?”가 떠올라요.",
+    "mood.happy": "행복", "mood.happy.d": "기본 상태. 잔재주, 꿈틀거림, 그리고 가끔의 축하.",
+    "mood.tired.alt": "피곤한 틴트의 모치", "mood.hungry.alt": "배고픈 틴트의 모치", "mood.bored.alt": "심심한 틴트의 모치",
+    "mood.lonely.alt": "외로운 틴트의 모치", "mood.curious.alt": "궁금한 틴트의 모치", "mood.happy.alt": "행복한 모치",
+    "poses.h": "모든 포즈를 손으로 직접 그렸어요",
+    "poses.sub1": "28개 스프라이트, 한 캐릭터, 각자 전용 CSS 모션 — 그 위에 기분별 색 틴트까지. 진짜 파일이에요, 바로",
+    "llm.h": "선택: 목소리를 붙여 주세요",
+    "llm.sub": "모치는 기본이 무음이고, 그걸로 충분해요. 로컬 Ollama 모델을 붙이면 캐릭터답게 짧고 기분에 맞는 대답이 더해져요 — 목줄은 짧게 유지돼요.",
+    "llm.term": "모치와 대화하기",
+    "llm.g1b": "살리언스 게이트 + 대기시간 제한.",
+    "llm.g1s1": "이벤트는 살리언스", "llm.g1s2": "그리고", "llm.g1s3": "쿨다운", "llm.g1s4": "을 통과해야 해요. 돌봄 행동만으로는 게이트에 못 닿아요 — 놀이 40, 먹이 35, 재우기 25, 쓰다듬기 20.",
+    "llm.g2b": "말보다 기억이 먼저.",
+    "llm.g2s": "관련 기억을 0.4·중요도 + 0.3·최신성 + 0.3·신뢰도로 다시 정렬해요. 오래됐지만 중요한 기억이 최근의 사소한 기억을 이겨요.",
+    "llm.g3b": "실패는 우아하게.",
+    "llm.g3s": "Ollama 오프라인, DB 불가, 망가진 JSON — 펫은 계속 움직여요. 실패는 경고만 남기고 절대 위로 새어 나가지 않아요.",
+    "sb.h": "모치의 온 세상은 폴더 하나",
+    "sb.sub1": "모든 경로가 잠기는 샌드박스 (정규화·검증,", "sb.sub2": " 금지, 절대 경로 탈출 금지, 밖으로 향하는 심볼릭 링크 금지). 다른 곳을 원하면", "sb.sub3": "를 가리키세요.",
+    "sb.tree.aria": "펫 홈 폴더 구조",
+    "sb.tree1": ".txt / .md / .json을 여기에", "sb.tree2": "모치가 요약을 적어요", "sb.tree3": "매일의 회고", "sb.tree4": "기억 내보내기",
+    "sb.r1": "읽기는 오직 inbox/에서, 그리고 파일별 명시적 동의 뒤에만.",
+    "sb.r2": "쓰기는 오직 notes/, dreams/, exports/에만.",
+    "sb.r3": "셸 없음, eval 없음, 원격 스킬 로딩 없음 — 영원히.",
+    "sb.r4": "모든 경로는 읽기/쓰기 전에 정규화되어 감옥 안인지 검증돼요.",
+    "road.h": "다음 계획 — 아직 출시 전이에요",
+    "road.1": "음성 (옵트인)", "road.2": "커스텀 스킨", "road.3": "Live2D / VRM", "road.4": "Git & 테스트 러너 감시",
+    "road.5": "로컬 임베딩 기억 검색", "road.6": "여러 마리 펫", "road.7": "옷장 & 성장 단계",
+    "close.cite": "— 프로젝트 노스스타, PRD §1", "close.star": "하루가 좋아졌다면, 스타를 눌러 주세요",
+    "foot.lic": "Pet Mochi — MIT 라이선스.", "foot.art": "28개 손그림 포즈 · 스프라이트는 이 프로젝트를 위해 직접 그렸어요.",
+    "noscript": "실시간 펫 데모에는 JavaScript가 필요해요 — 나머지는 스크립트 없이도 잘 읽혀요."
+  };
+
+  var lang = "en";
+  var EN_SNAPSHOT = { text: {}, attr: {} };
+
+  function snapshotEnglish() {
+    document.querySelectorAll("[data-i18n]").forEach(function (el) {
+      EN_SNAPSHOT.text[el.getAttribute("data-i18n")] = el.innerHTML;
+    });
+    document.querySelectorAll("[data-i18n-attr]").forEach(function (el) {
+      var spec = el.getAttribute("data-i18n-attr"), store = {};
+      spec.split(";").forEach(function (pair) {
+        var kv = pair.split(":");
+        if (kv.length === 2) store[kv[0].trim()] = el.getAttribute(kv[0].trim());
+      });
+      EN_SNAPSHOT.attr[spec] = { el: el, store: store };
+    });
+  }
+
+  function applyLang(next, persist) {
+    lang = next;
+    if (persist) { try { localStorage.setItem("mochi-lang", next); } catch (e) { /* private mode */ } }
+    document.documentElement.lang = next === "ko" ? "ko" : "en";
+    document.querySelectorAll("[data-i18n]").forEach(function (el) {
+      var key = el.getAttribute("data-i18n");
+      var val = next === "ko" ? (KO[key] != null ? KO[key] : EN_SNAPSHOT.text[key]) : EN_SNAPSHOT.text[key];
+      if (val != null) el.innerHTML = val;
+    });
+    Object.keys(EN_SNAPSHOT.attr).forEach(function (spec) {
+      var rec = EN_SNAPSHOT.attr[spec];
+      rec.el.getAttribute("data-i18n-attr").split(";").forEach(function (pair) {
+        var kv = pair.split(":");
+        if (kv.length !== 2) return;
+        var attr = kv[0].trim(), key = kv[1].trim();
+        var val = next === "ko" ? (KO[key] != null ? KO[key] : rec.store[attr]) : rec.store[attr];
+        if (val != null) rec.el.setAttribute(attr, val);
+      });
+    });
+    var langBtn = document.getElementById("langBtn");
+    if (langBtn) langBtn.textContent = next === "ko" ? "EN" : "한국어";
+    var copyBtns = document.querySelectorAll(".copy");
+    copyBtns.forEach(function (b) { if (b.textContent !== "copied ✓" && b.textContent !== "복사됨 ✓") b.textContent = t("copy", "복사"); });
+    render(); /* refresh mood pill, alts, report text */
+  }
+
+  function detectLang() {
+    try {
+      var saved = localStorage.getItem("mochi-lang");
+      if (saved === "ko" || saved === "en") return saved;
+    } catch (e) { /* private mode */ }
+    var langs = navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language || "en"];
+    for (var i = 0; i < langs.length; i++) {
+      if ((langs[i] || "").toLowerCase().indexOf("ko") === 0) return "ko";
+    }
+    return "en";
+  }
+
+  function t(en, ko) { return lang === "ko" ? ko : en; }
+
+  var clamp01 = function (n) { return Math.min(100, Math.max(0, n)); };
+
+  /* ---- state (matches sim/state.ts defaults in spirit) ---- */
+  var state = {
+    hunger: 28, energy: 80, boredom: 22, curiosity: 25,
+    stress: 8, affection: 65,
+    mood: "happy", currentAnimation: "idle",
+    lastInteractionAt: new Date().toISOString()
+  };
+  var ctx = { cursorNearPet: false, recentPositiveEvent: false };
+
+  /* ---- sim/mood.ts ---- */
+  function deriveMood(s) {
+    if (s.energy < 20) return "tired";
+    if (s.hunger > 75) return "hungry";
+    if (s.boredom > 70) return "bored";
+    if (s.affection < 20) return "lonely";
+    if (s.curiosity > 70) return "curious";
+    return "happy";
+  }
+
+  /* ---- sim/decay.ts (per-second deltas, exactly as shipped) ---- */
+  function applyDecay(s, elapsed) {
+    if (elapsed <= 0) return s;
+    var since = (Date.now() - new Date(s.lastInteractionAt).getTime()) / 60000;
+    var lonely = since > 30;
+    return {
+      hunger: clamp01(s.hunger + 0.10 * elapsed),
+      energy: clamp01(s.energy + (s.currentAnimation === "sleep" ? 0.5 : -0.08) * elapsed),
+      boredom: clamp01(s.boredom + 0.10 * elapsed),
+      curiosity: clamp01(s.curiosity + (s.curiosity > 60 ? -0.06 : 0.04) * elapsed),
+      stress: clamp01(s.stress - 0.03 * elapsed),
+      affection: clamp01(s.affection + (lonely ? -0.05 * elapsed : 0)),
+      mood: s.mood, currentAnimation: s.currentAnimation,
+      lastInteractionAt: s.lastInteractionAt
+    };
+  }
+
+  /* ---- sim/movement.ts ---- */
+  function chooseMovement(s, c) {
+    if (s.energy < 15) return "sleep";
+    if (c.cursorNearPet) return "look_cursor";
+    if (s.boredom > 75) return "walk";
+    if (s.mood === "happy" && c.recentPositiveEvent) return "celebrate";
+    var idle = ["idle", "sit", "look_cursor"];
+    return idle[Math.floor(Math.random() * idle.length)];
+  }
+
+  /* ---- sprites (SRC map from MochiSprite.svelte) ---- */
+  var POSE_LABELS = {
+    en: {
+      idle: "idling", walk: "walking", run: "running", sleep: "sleeping",
+      jump: "jumping", sit: "sitting", look_cursor: "watching your cursor",
+      hide: "hiding", celebrate: "celebrating", eat: "eating", eat_2: "eating",
+      yawn: "yawning", roll: "rolling", blush: "blushing",
+      stretch: "stretching", peek: "peeking", tilt_head: "tilting her head",
+      shake: "shaking", nuzzle: "nuzzling", wiggle: "wiggling",
+      dizzy: "dizzy", surprise: "surprised",
+      eat_strawberry: "eating a strawberry", eat_strawberry_2: "eating a strawberry",
+      eat_cookie: "eating a cookie", eat_cookie_2: "eating a cookie"
+    },
+    ko: {
+      idle: "쉬는 중", walk: "걷는 중", run: "뛰는 중", sleep: "자는 중",
+      jump: "점프", sit: "앉아 있음", look_cursor: "커서 바라보는 중",
+      hide: "숨는 중", celebrate: "축하 중", eat: "먹는 중", eat_2: "먹는 중",
+      yawn: "하품", roll: "구르는 중", blush: "부끄러워하는 중",
+      stretch: "스트레칭", peek: "살짝 엿보는 중", tilt_head: "고개 갸웃",
+      shake: "흔드는 중", nuzzle: "볼 비비는 중", wiggle: "꿈틀꿈틀",
+      dizzy: "어지러운 중", surprise: "놀란 중",
+      eat_strawberry: "딸기 먹는 중", eat_strawberry_2: "딸기 먹는 중",
+      eat_cookie: "쿠키 먹는 중", eat_cookie_2: "쿠키 먹는 중"
+    }
+  };
+  function poseLabel(pose) { return (POSE_LABELS[lang] && POSE_LABELS[lang][pose]) || POSE_LABELS.en[pose] || pose; }
+  var MOOD_WORD = { en: { happy: "happy", curious: "curious", tired: "tired", hungry: "hungry", bored: "bored", lonely: "lonely" },
+                    ko: { happy: "행복", curious: "궁금", tired: "피곤", hungry: "배고픔", bored: "심심", lonely: "외로움" } };
+  var SRC = {
+    idle: ["mochi-idle"], walk: ["mochi-walk-1", "mochi-walk-2"],
+    run: ["mochi-run-1", "mochi-run-2"], sleep: ["mochi-sleep"],
+    jump: ["mochi-jump"], sit: ["mochi-sit"], look_cursor: ["mochi-look-cursor"],
+    hide: ["mochi-hide"], celebrate: ["mochi-celebrate"],
+    eat: ["mochi-eat-1"], eat_2: ["mochi-eat-2"],
+    eat_strawberry: ["mochi-eat-strawberry-1"], eat_strawberry_2: ["mochi-eat-strawberry-2"],
+    eat_cookie: ["mochi-eat-cookie-1"], eat_cookie_2: ["mochi-eat-cookie-2"],
+    yawn: ["mochi-yawn"], roll: ["mochi-roll"], blush: ["mochi-blush"],
+    stretch: ["mochi-stretch"], peek: ["mochi-peek"], tilt_head: ["mochi-tilt-head"],
+    shake: ["mochi-shake"], nuzzle: ["mochi-nuzzle"], wiggle: ["mochi-wiggle"],
+    dizzy: ["mochi-dizzy"], surprise: ["mochi-surprise"]
+  };
+
+  /* ---- mood presentation (ChatBubble tints + MochiSprite filters) ---- */
+  var TINT = { happy: "#ffe3ea", curious: "#fff1d6", tired: "#e8dcea", hungry: "#ffe0cc", bored: "#e2e8ee", lonely: "#d9d2ea" };
+  var GLYPH = { happy: "✿", curious: "?", tired: "💤", hungry: "🍡", bored: "…", lonely: "♡" };
+  var FILTER = {
+    happy: "none",
+    curious: "hue-rotate(-12deg) saturate(1.08)",
+    tired: "hue-rotate(25deg) saturate(0.7) brightness(0.96)",
+    hungry: "hue-rotate(-22deg) saturate(1.18)",
+    bored: "saturate(0.45) brightness(0.97)",
+    lonely: "hue-rotate(40deg) saturate(0.78) brightness(0.95)"
+  };
+
+  /* ---- DOM ---- */
+  var $ = function (id) { return document.getElementById(id); };
+  var sprite = $("sprite"), spriteImg = $("spriteImg"),
+      bubble = $("bubble"), moodPill = $("moodPill"),
+      moodGlyph = $("moodGlyph"), moodWord = $("moodWord"),
+      screen = $("screen"), report = $("report"),
+      btnFeed = $("btnFeed"), btnPlay = $("btnPlay"), btnPet = $("btnPet"),
+      btnRest = $("btnRest"), btnReport = $("btnReport"), tray = $("snackTray");
+
+  /* ---- rendering ---- */
+  var frameTimer = null, frameIdx = 0, currentPose = "idle";
+
+  function setPose(pose, mood) {
+    currentPose = pose;
+    var frames = SRC[pose] || SRC.idle;
+    if (frameTimer) { clearInterval(frameTimer); frameTimer = null; }
+    function show() {
+      var f = frames[frameIdx % frames.length];
+      spriteImg.src = "assets/sprites/" + f + ".webp";
+      spriteImg.alt = t("Mochi " + poseLabel(pose) + (mood ? ", " + mood : ""),
+                        "모치가 " + poseLabel(pose) + (mood ? ", " + mood : ""));
+    }
+    frameIdx = 0; show();
+    if (frames.length > 1) {
+      var period = pose === "run" ? 160 : 280; /* MochiSprite.svelte cycle */
+      frameTimer = setInterval(function () { frameIdx++; show(); }, period);
+    }
+    sprite.classList.remove("idle-anim", "walk-anim", "sleep-anim");
+    if (pose === "idle" || pose === "sit" || pose === "look_cursor" || pose === "celebrate" || pose === "blush") sprite.classList.add("idle-anim");
+    else if (pose === "walk" || pose === "run") sprite.classList.add("walk-anim");
+    else if (pose === "sleep") sprite.classList.add("sleep-anim");
+  }
+
+  function render() {
+    state.mood = deriveMood(state);
+    moodWord.textContent = MOOD_WORD[lang][state.mood];
+    moodGlyph.textContent = GLYPH[state.mood];
+    moodPill.style.background = TINT[state.mood];
+    spriteImg.style.filter = FILTER[state.mood];
+    spriteImg.alt = t("Mochi " + poseLabel(currentPose) + ", " + MOOD_WORD.en[state.mood],
+                      "모치가 " + poseLabel(currentPose) + " · " + MOOD_WORD.ko[state.mood]);
+
+    /* PetStatus.svelte thresholds: <25 danger, <45 warn, else ok */
+    function bar(el, v) {
+      el.style.width = Math.round(v) + "%"; /* integers at the boundary */
+      el.style.background = v < 25 ? "#e57373" : v < 45 ? "#f5b955" : "#6dc28a";
+      el.setAttribute("aria-valuenow", String(Math.round(v)));
+    }
+    bar($("barHun"), state.hunger); bar($("barEng"), state.energy);
+    bar($("barBrd"), state.boredom); bar($("barAff"), state.affection);
+  }
+
+  function say(text) {
+    bubble.textContent = text;
+    bubble.classList.add("show");
+    clearTimeout(say.t);
+    say.t = setTimeout(function () { bubble.classList.remove("show"); }, 3400);
+  }
+
+  function particles(kind, n) {
+    var glyphs = { hearts: ["♥", "♡"], crumbs: ["🍡", "•"], confetti: ["✦", "✿", "★"], z: ["z", "Z"] };
+    var set = glyphs[kind] || glyphs.confetti;
+    var r = sprite.getBoundingClientRect(), s = screen.getBoundingClientRect();
+    var ox = r.left - s.left + r.width / 2, oy = r.top - s.top + r.height / 2;
+    for (var i = 0; i < (n || 8); i++) {
+      var p = document.createElement("span");
+      p.className = "particle";
+      p.textContent = set[Math.floor(Math.random() * set.length)];
+      p.style.left = (ox + (Math.random() - 0.5) * 70) + "px";
+      p.style.top = (oy - 20) + "px";
+      p.style.setProperty("--dx", ((Math.random() - 0.5) * 60) + "px");
+      p.style.setProperty("--dr", ((Math.random() - 0.5) * 90) + "deg");
+      screen.appendChild(p);
+      setTimeout(function (el) { return function () { el.remove(); }; }(p), 1300);
+    }
+  }
+
+  /* ---- positioning: JS centers the sprite for its actual rendered size ---- */
+  var hasWandered = false;
+
+  function centerSprite() {
+    var w = screen.clientWidth, h = screen.clientHeight, size = sprite.offsetWidth || 150;
+    sprite.style.transform = "none";
+    sprite.style.left = Math.round((w - size) / 2) + "px";
+    sprite.style.top = Math.round(h * 0.58 - size / 2) + "px";
+  }
+
+  /* ---- wandering (nextWanderPosition, simplified for one screen) ---- */
+  function wander() {
+    hasWandered = true;
+    var sr = screen.getBoundingClientRect(), pr = sprite.getBoundingClientRect();
+    var size = pr.width || 150;
+    var maxX = Math.max(0, screen.clientWidth - size);
+    var maxY = Math.max(0, screen.clientHeight - size - 70);
+    var cx = pr.left - sr.left, cy = pr.top - sr.top;
+    var x = Math.min(maxX, Math.max(0, cx + (Math.random() - 0.5) * 160));
+    var y = Math.min(maxY, Math.max(40, cy + (Math.random() - 0.5) * 60));
+    sprite.style.left = Math.round(x) + "px";
+    sprite.style.top = Math.round(y) + "px";
+  }
+
+  window.addEventListener("resize", function () {
+    if (!hasWandered) { centerSprite(); return; }
+    var size = sprite.offsetWidth || 150;
+    var maxX = Math.max(0, screen.clientWidth - size);
+    var maxY = Math.max(0, screen.clientHeight - size - 70);
+    var x = Math.min(maxX, Math.max(0, parseFloat(sprite.style.left) || 0));
+    var y = Math.min(maxY, Math.max(40, parseFloat(sprite.style.top) || 40));
+    sprite.style.left = x + "px"; sprite.style.top = y + "px";
+  });
+
+  /* ---- the tick (runTick: decay → mood → movement) ---- */
+  function tick() {
+    state = applyDecay(state, 3);
+    var mv = chooseMovement(state, ctx);
+    if (state.currentAnimation === "sleep" && state.energy >= 15) mv = chooseMovement(state, ctx);
+    state.currentAnimation = mv;
+    if (mv === "sleep" && !tick.wasAsleep) { say(t("Mochi: …zzz", "모치: …zzz")); particles("z", 3); }
+    tick.wasAsleep = mv === "sleep";
+    setPose(mv, state.mood);
+    if (mv === "walk" || mv === "run") wander();
+    render();
+  }
+  setInterval(tick, 3000);
+
+  /* ---- actions (applyAction: real stat deltas + animation beats) ---- */
+  var busy = false;
+  function playSteps(steps, done) {
+    busy = true;
+    [btnFeed, btnPlay, btnPet, btnRest, btnReport].forEach(function (b) { b.disabled = true; });
+    var i = 0;
+    (function next() {
+      if (i >= steps.length) {
+        busy = false;
+        [btnFeed, btnPlay, btnPet, btnRest, btnReport].forEach(function (b) { b.disabled = false; });
+        ctx.recentPositiveEvent = true;
+        clearTimeout(playSteps.t);
+        playSteps.t = setTimeout(function () { ctx.recentPositiveEvent = false; }, 8000);
+        if (done) done();
+        return;
+      }
+      var s = steps[i++];
+      setPose(s.animation, state.mood);
+      setTimeout(next, s.durationMs);
+    })();
+  }
+
+  var nowIso = function () { return new Date().toISOString(); };
+
+  function feed(snack) {
+    tray.classList.remove("open"); btnFeed.setAttribute("aria-expanded", "false");
+    var steps;
+    if (snack === "strawberry") steps = [
+      { animation: "eat_strawberry", durationMs: 380 }, { animation: "eat_strawberry_2", durationMs: 380 },
+      { animation: "eat_strawberry", durationMs: 380 }, { animation: "eat_strawberry_2", durationMs: 380 },
+      { animation: "celebrate", durationMs: 700 }
+    ];
+    else if (snack === "cookie") steps = [
+      { animation: "eat_cookie", durationMs: 380 }, { animation: "eat_cookie_2", durationMs: 380 },
+      { animation: "eat_cookie", durationMs: 380 }, { animation: "eat_cookie_2", durationMs: 380 },
+      { animation: "celebrate", durationMs: 700 }
+    ];
+    else steps = [
+      { animation: "eat", durationMs: 380 }, { animation: "eat_2", durationMs: 380 },
+      { animation: "eat", durationMs: 380 }, { animation: "eat_2", durationMs: 380 },
+      { animation: "celebrate", durationMs: 700 }
+    ];
+    state = {
+      hunger: clamp01(state.hunger - 35), affection: clamp01(state.affection + 3),
+      stress: clamp01(state.stress - 4), curiosity: clamp01(state.curiosity - 35),
+      currentAnimation: "celebrate", lastInteractionAt: nowIso()
+    };
+    Object.assign(state, { mood: state.mood }); render();
+    say(t("Mochi: *nom nom* 🍡", "모치: 냠냠 🍡"));
+    particles("crumbs", 7);
+    playSteps(steps, function () { particles("confetti", 9); });
+  }
+
+  function play() {
+    var r = Math.random(), steps;
+    if (r < 1 / 3) steps = [
+      { animation: "run", durationMs: 400 }, { animation: "jump", durationMs: 420 },
+      { animation: "run", durationMs: 400 }, { animation: "celebrate", durationMs: 600 }
+    ];
+    else if (r < 2 / 3) steps = [
+      { animation: "roll", durationMs: 550 }, { animation: "roll", durationMs: 550 },
+      { animation: "jump", durationMs: 400 }, { animation: "celebrate", durationMs: 600 }
+    ];
+    else steps = [
+      { animation: "jump", durationMs: 380 }, { animation: "celebrate", durationMs: 500 },
+      { animation: "jump", durationMs: 380 }, { animation: "celebrate", durationMs: 600 }
+    ];
+    state = {
+      boredom: clamp01(state.boredom - 30), energy: clamp01(state.energy - 8),
+      affection: clamp01(state.affection + 4), stress: clamp01(state.stress - 6),
+      curiosity: clamp01(state.curiosity - 35),
+      currentAnimation: "celebrate", lastInteractionAt: nowIso(),
+      hunger: state.hunger, mood: state.mood
+    };
+    render();
+    say(t(["Mochi: wheee! 🎾", "Mochi: rolly polly!", "Mochi: again, again!"][Math.min(2, Math.floor(Math.random() * 3))],
+          ["모치: 야호! 🎾", "모치: 데굴데굴!", "모치: 또! 또!"][Math.min(2, Math.floor(Math.random() * 3))]));
+    wander();
+    playSteps(steps, function () { particles("confetti", 10); });
+  }
+
+  function rest() {
+    state = {
+      energy: clamp01(state.energy + 25), stress: clamp01(state.stress - 12),
+      curiosity: clamp01(state.curiosity - 35),
+      currentAnimation: "sleep", lastInteractionAt: nowIso(),
+      hunger: state.hunger, boredom: state.boredom, affection: state.affection, mood: state.mood
+    };
+    render();
+    say(t("Mochi: *yawn* …zzz 💤", "모치: *하품* …zzz 💤"));
+    playSteps([
+      { animation: "yawn", durationMs: 700 }, { animation: "sit", durationMs: 500 },
+      { animation: "sleep", durationMs: 900 }
+    ], function () { particles("z", 3); });
+  }
+
+  /* petReactionFor, verbatim (translated for ko) */
+  function petReactionFor(mood) {
+    if (lang === "ko") {
+      switch (mood) {
+        case "tired": return "모치: *졸린 눈비비*";
+        case "hungry": return "모치: *간식 원해요*";
+        case "bored": return "모치: 좋아! 놀자!";
+        case "lonely": return "모치: ♥ 고마워요";
+        default: return "모치: ✿ 안녕";
+      }
+    }
+    switch (mood) {
+      case "tired": return "Mochi: *sleepy nuzzle*";
+      case "hungry": return "Mochi: *wants a snack*";
+      case "bored": return "Mochi: yes! play!";
+      case "lonely": return "Mochi: ♥ thank you";
+      default: return "Mochi: ✿ hi";
+    }
+  }
+  function pat() {
+    var prior = state.currentAnimation;
+    state = {
+      affection: clamp01(state.affection + 1), boredom: clamp01(state.boredom - 4),
+      stress: clamp01(state.stress - 2), curiosity: clamp01(state.curiosity - 35),
+      currentAnimation: "celebrate", lastInteractionAt: nowIso(),
+      hunger: state.hunger, energy: state.energy, mood: state.mood
+    };
+    render();
+    say(petReactionFor(state.mood));
+    particles("hearts", 6);
+    var steps = [{ animation: "blush", durationMs: 520 }, { animation: "celebrate", durationMs: 500 }];
+    if (prior === "sleep") steps = [{ animation: "yawn", durationMs: 420 }].concat(steps);
+    playSteps(steps);
+  }
+
+  function writeReport() {
+    state.mood = deriveMood(state);
+    var r = function (v) { return Math.round(v); };
+    report.innerHTML =
+      '<b>' + t("Status report — deterministic mode", "상태 리포트 — 결정적 모드") + '</b>' +
+      '<div class="row"><span>' + t("mood", "기분") + '</span><span>' + MOOD_WORD[lang][state.mood] + '</span></div>' +
+      '<div class="row"><span>' + t("energy / hunger", "에너지 / 배고픔") + '</span><span>' + r(state.energy) + ' / ' + r(state.hunger) + '</span></div>' +
+      '<div class="row"><span>' + t("boredom / affection", "심심함 / 애정") + '</span><span>' + r(state.boredom) + ' / ' + r(state.affection) + '</span></div>' +
+      '<p class="note">' + t("In the app this fires after 12 h idle, needs a quiet minute, and lands in dreams/. Missed windows are dropped — no catch-up.",
+                             "앱에서는 12시간 대기 후 조용한 순간을 골라 dreams/에 기록해요. 놓친 창은 그냥 버려요 — 따라잡기 없이.") + '</p>' +
+      '<button type="button" aria-label="Close report">' + t("✕", "✕") + '</button>';
+    report.classList.add("show");
+    report.querySelector("button").addEventListener("click", function () { report.classList.remove("show"); });
+    say(t("Mochi: *scribbles her status report*", "모치: *상태 리포트를 끄적끄적*"));
+    setPose("tilt_head", state.mood);
+    setTimeout(function () { report.classList.remove("show"); }, 9000);
+  }
+
+  /* ---- wiring ---- */
+  btnFeed.addEventListener("click", function () {
+    var open = tray.classList.toggle("open");
+    btnFeed.setAttribute("aria-expanded", open ? "true" : "false");
+  });
+  Array.prototype.forEach.call(tray.querySelectorAll("[data-snack]"), function (b) {
+    b.addEventListener("click", function () { feed(b.getAttribute("data-snack")); });
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && tray.classList.contains("open")) {
+      tray.classList.remove("open"); btnFeed.setAttribute("aria-expanded", "false"); btnFeed.focus();
+    }
+  });
+  document.addEventListener("click", function (e) {
+    if (tray.classList.contains("open") && !tray.contains(e.target) && e.target !== btnFeed && !btnFeed.contains(e.target)) {
+      tray.classList.remove("open"); btnFeed.setAttribute("aria-expanded", "false");
+    }
+  });
+  btnPlay.addEventListener("click", play);
+  btnPet.addEventListener("click", pat);
+  sprite.addEventListener("click", pat);
+  btnRest.addEventListener("click", rest);
+  btnReport.addEventListener("click", writeReport);
+
+  /* cursor proximity → look_cursor (movement.ts ctx.cursorNearPet) */
+  screen.addEventListener("mousemove", function (e) {
+    var r = screen.getBoundingClientRect();
+    ctx.cursorNearPet = e.clientX > r.left + 20 && e.clientX < r.right - 20 &&
+                        e.clientY > r.top + 50 && e.clientY < r.bottom - 20;
+  });
+  screen.addEventListener("mouseleave", function () { ctx.cursorNearPet = false; });
+
+  /* ---- pose catalogue (every real sprite file) ---- */
+  var POSES = [
+    "idle", "walk-1", "walk-2", "run-1", "run-2", "jump", "sit", "sleep",
+    "look-cursor", "hide", "celebrate", "eat-1", "eat-2", "yawn", "roll",
+    "blush", "stretch", "peek", "tilt-head", "shake", "nuzzle", "wiggle",
+    "dizzy", "surprise", "eat-strawberry-1", "eat-strawberry-2",
+    "eat-cookie-1", "eat-cookie-2"
+  ];
+  var NAMES = {
+    "walk-1": "walk · 1", "walk-2": "walk · 2", "run-1": "run · 1", "run-2": "run · 2",
+    "look-cursor": "look-cursor", "eat-1": "eat · 1", "eat-2": "eat · 2",
+    "tilt-head": "tilt-head", "eat-strawberry-1": "strawberry · 1", "eat-strawberry-2": "strawberry · 2",
+    "eat-cookie-1": "cookie · 1", "eat-cookie-2": "cookie · 2"
+  };
+  var grid = $("poseGrid");
+  POSES.forEach(function (p) {
+    var cell = document.createElement("div");
+    cell.className = "pose";
+    cell.title = "mochi-" + p + ".png";
+    var img = document.createElement("img");
+    img.src = "assets/sprites/mochi-" + p + "-t.webp";
+    img.alt = t("Mochi " + (NAMES[p] || p) + " pose", "모치 " + (NAMES[p] || p) + " 포즈");
+    img.loading = "lazy"; img.decoding = "async";
+    img.width = 72; img.height = 72;
+    var code = document.createElement("div");
+    code.className = "code";
+    code.textContent = "mochi-" + p + ".png";
+    cell.appendChild(img); cell.appendChild(code);
+    grid.appendChild(cell);
+  });
+
+  /* ---- copy buttons ---- */
+  function wireCopy(btn, getText) {
+    btn.addEventListener("click", function () {
+      var t0 = getText();
+      function done(ok) {
+        btn.textContent = ok ? t("copied ✓", "복사됨 ✓") : t("select + ⌘C", "직접 선택 후 ⌘C");
+        setTimeout(function () { btn.textContent = t("copy", "복사"); }, 1800);
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(t0).then(function () { done(true); }, function () { done(false); });
+      } else done(false);
+    });
+  }
+  wireCopy($("copyBtn"), function () {
+    return "git clone https://github.com/cskwork/pet-mochi.git\ncd pet-mochi\nnpm install\nnpm run tauri:dev";
+  });
+  var copy2 = document.querySelector(".copy2");
+  if (copy2) wireCopy(copy2, function () { return "ollama pull gemma4:e2b"; });
+
+  /* ---- boot ---- */
+  snapshotEnglish();
+  var langBtnEl = document.getElementById("langBtn");
+  if (langBtnEl) langBtnEl.addEventListener("click", function () {
+    applyLang(lang === "ko" ? "en" : "ko", true);
+  });
+  applyLang(detectLang(), false); /* auto-detect; manual toggle persists */
+  centerSprite();
+  setPose("idle", "happy");
+  setTimeout(function () { say(t("Mochi: ✿ hi", "모치: ✿ 안녕")); }, 700);
+})();
+</script>
+</body>
+</html>
