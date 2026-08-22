@@ -34,6 +34,8 @@ export type Settings = {
   stageBackground: string;
   /** Synth sound effects for user-initiated actions (REQ-117). */
   soundEffects: boolean;
+  /** Desktop notifications for critical needs (REQ-122). Opt-in, default off. */
+  desktopNotifications: boolean;
   /** Read-only: true if a cloud API key is on disk. The key value is never returned. */
   cloudApiKeySet: boolean;
 };

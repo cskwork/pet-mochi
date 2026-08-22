@@ -24,6 +24,7 @@ const DB_FILE: &str = "mochi.db";
 pub fn run() {
     let _ = env_logger::try_init();
     tauri::Builder::default()
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let pet_home = resolve_pet_home();
             ensure_pet_home(&pet_home).expect("could not create pet_home");

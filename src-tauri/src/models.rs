@@ -198,13 +198,20 @@ pub struct Settings {
     /// Defaulted so pre-v0.2 settings blobs still deserialize.
     #[serde(default = "default_true")]
     pub sound_effects: bool,
+    /// Desktop notifications for critical needs (PRD §28 REQ-122).
+    /// Opt-in only — default off, silent per §27.2.2. Defaulted so settings
+    /// blobs persisted before v0.2.x still deserialize.
+    #[serde(default)]
+    pub desktop_notifications: bool,
     /// Read-only flag: true if a cloud API key is on disk. Never carries the key value.
     #[serde(default)]
     pub cloud_api_key_set: bool,
 }
 
-/// Closed list of stage backgrounds the frontend styles (REQ-114).
-pub const STAGE_BACKGROUNDS: [&str; 5] = ["transparent", "cream", "blossom", "mint", "night"];
+/// Closed list of stage backgrounds the frontend styles (REQ-114). "auto"
+/// (REQ-118) resolves to a themed card from the current time of day.
+pub const STAGE_BACKGROUNDS: [&str; 6] =
+    ["transparent", "auto", "cream", "blossom", "mint", "night"];
 
 fn default_stage_background() -> String {
     "transparent".to_string()
@@ -241,6 +248,7 @@ impl Default for Settings {
             developer_event_log: false,
             stage_background: default_stage_background(),
             sound_effects: true,
+            desktop_notifications: false,
             cloud_api_key_set: false,
         }
     }
@@ -317,12 +325,16 @@ mod model_tests {
         let s: Settings = serde_json::from_str(legacy).unwrap();
         assert_eq!(s.stage_background, "transparent");
         assert!(s.sound_effects);
+        // REQ-122 — notifications are opt-in; legacy blobs default to off.
+        assert!(!s.desktop_notifications);
     }
 
     #[test]
     fn stage_background_normalizes_to_closed_list() {
         assert_eq!(normalize_stage_background("night"), "night");
         assert_eq!(normalize_stage_background("transparent"), "transparent");
+        // REQ-118 — "auto" is a first-class value and passes through unchanged.
+        assert_eq!(normalize_stage_background("auto"), "auto");
         assert_eq!(normalize_stage_background("hotpink; url(evil)"), "transparent");
         assert_eq!(normalize_stage_background(""), "transparent");
     }
