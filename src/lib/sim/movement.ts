@@ -53,6 +53,15 @@ function clamp(n: number, lo: number, hi: number): number {
 }
 
 /**
+ * One raw, UN-clamped wander delta (logical px): x ∈ [-40, 40], y ∈ [-20, 20].
+ * REQ-120 — extracted so the roam path can hand the un-clamped step to
+ * `advanceRoam` while `nextWanderPosition` keeps consuming it below.
+ */
+export function nextWanderDelta(rng: Rng = defaultRng): { x: number; y: number } {
+  return { x: Math.round((rng() - 0.5) * 80), y: Math.round((rng() - 0.5) * 40) };
+}
+
+/**
  * Pick the next position delta when the pet decides to wander. Bounded inside
  * the given window dimensions. When `obstacles` is provided, refuses positions
  * that would overlap any obstacle rect — retries up to a few times and, on
@@ -76,10 +85,9 @@ export function nextWanderPosition(
 
   // First try natural random steps (the usual wander feel).
   for (let i = 0; i < 6; i++) {
-    const stepX = Math.round((rng() - 0.5) * 80);
-    const stepY = Math.round((rng() - 0.5) * 40);
-    const x = clamp(current.x + stepX, 0, maxX);
-    const y = clamp(current.y + stepY, 0, maxY);
+    const step = nextWanderDelta(rng);
+    const x = clamp(current.x + step.x, 0, maxX);
+    const y = clamp(current.y + step.y, 0, maxY);
     if (!overlapsAny(x, y)) return { x, y };
   }
 

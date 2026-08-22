@@ -45,6 +45,8 @@
     ritualForTransition,
     landingSteps,
     resolveStageTheme,
+    nextWanderDelta,
+    advanceRoam,
     newNotificationGate,
     notificationCandidate,
     notificationCopy,
@@ -68,11 +70,13 @@
   } from "../sim";
   import { api } from "../bridge/api";
   import { notifyDesktop } from "../bridge/notify";
+  import { getWorkArea, type WorkArea } from "../bridge/roamer";
   import { listen } from "../bridge/tauri";
   import { disposeSfx, playSfx, setSfxEnabled } from "../audio/sfx";
   import { eventBus } from "../events/bus";
   import { tryEnterAutonomous, type LastAutonomous } from "./autonomousGate";
   import { Window, cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
+  import { PhysicalPosition } from "@tauri-apps/api/dpi";
 
   type Props = { petSize?: number };
   let { petSize = 140 }: Props = $props();
@@ -164,6 +168,20 @@
   let dragStartWinPos: { x: number; y: number } | null = null;
   let lastWinPos: { x: number; y: number } | null = null;
   let stableWinSamples = 0;
+  // REQ-120 — screen-edge walking cache. The work area is logical px (what
+  // the sim speaks); the window position is kept in BOTH spaces because the
+  // OS truth is physical — only step deltas cross the boundary (rounded
+  // once), so repeated logical↔physical conversion can't accumulate drift.
+  // Refreshed at most every 30s, piggybacking the walk branch of the 3s tick
+  // (no new timers).
+  type RoamCache = {
+    workArea: WorkArea;
+    winPosPhysical: { x: number; y: number };
+    winPosLogical: { x: number; y: number };
+  };
+  let roamCache: RoamCache | null = null;
+  let roamRefreshedAt = 0;
+  const ROAM_REFRESH_MS = 30_000;
   // REQ-113 animation intensity (0–1.5), live-updated via settings:changed.
   let animationIntensity = 1;
   // REQ-122 — opt-in critical-need desktop notifications. The pure gate in
@@ -297,6 +315,85 @@
 
   let wasReturning = false;
 
+  /** REQ-120 — refresh the roam cache when null or older than 30s; rides the
+   *  walk branch of the 3s tick (no new timers). */
+  function maybeRefreshRoamCache(now: number): void {
+    if (roamCache && now - roamRefreshedAt < ROAM_REFRESH_MS) return;
+    roamRefreshedAt = now;
+    void refreshRoamCache();
+  }
+
+  async function refreshRoamCache(): Promise<void> {
+    if (!api.hasBackend) return;
+    const [area, winPhys] = await Promise.all([
+      getWorkArea(),
+      getCurrentWindow().outerPosition().catch(() => null),
+    ]);
+    if (!area || !winPhys) {
+      roamCache = null;
+      return;
+    }
+    cachedScaleFactor = area.scaleFactor;
+    roamCache = {
+      workArea: area,
+      winPosPhysical: { x: winPhys.x, y: winPhys.y },
+      winPosLogical: {
+        x: winPhys.x / area.scaleFactor,
+        y: winPhys.y / area.scaleFactor,
+      },
+    };
+  }
+
+  /**
+   * REQ-120 — one edge-walking attempt for this tick. Returns true when the
+   * window was shifted (pet position already applied); false means the caller
+   * falls back to the classic in-window wander (interior step, no cache yet,
+   * or a work-area clamp — which is exactly the pre-REQ-120 behavior).
+   */
+  function tryRoamStep(now: number): boolean {
+    if (!api.hasBackend) return false;
+    maybeRefreshRoamCache(now);
+    const cache = roamCache;
+    if (!cache) return false;
+    const step = nextWanderDelta();
+    const roam = advanceRoam(
+      cache.winPosLogical,
+      position,
+      step,
+      cache.workArea,
+      viewportSize,
+      petSize,
+    );
+    if (!roam) return false;
+    const shifted =
+      roam.winPos.x !== cache.winPosLogical.x || roam.winPos.y !== cache.winPosLogical.y;
+    if (!shifted) return false; // work-area clamp — the classic path clamps too
+    facing = step.x < 0 ? "left" : step.x > 0 ? "right" : facing;
+    position = roam.petPos;
+    applyWindowShift(step.x, step.y);
+    return true;
+  }
+
+  /** REQ-120 — fire-and-forget window shift; window moves never focus. */
+  function applyWindowShift(dxLogical: number, dyLogical: number): void {
+    const cache = roamCache;
+    if (!cache) return;
+    const dx = Math.round(dxLogical * cache.workArea.scaleFactor);
+    const dy = Math.round(dyLogical * cache.workArea.scaleFactor);
+    const phys = { x: cache.winPosPhysical.x + dx, y: cache.winPosPhysical.y + dy };
+    roamCache = {
+      ...cache,
+      winPosPhysical: phys,
+      winPosLogical: {
+        x: cache.winPosLogical.x + dxLogical,
+        y: cache.winPosLogical.y + dyLogical,
+      },
+    };
+    getCurrentWindow()
+      .setPosition(new PhysicalPosition(phys.x, phys.y))
+      .catch(() => undefined);
+  }
+
   function tick() {
     const now = Date.now();
     const elapsedSec = (now - lastTickAt) / 1000;
@@ -313,13 +410,19 @@
     // actions panel are passed as obstacles so Mochi never visually disappears
     // behind UI chrome.
     if (next.currentAnimation === "walk" || next.currentAnimation === "run") {
-      const newPos = nextWanderPosition(
-        position,
-        { width: viewportSize.width, height: viewportSize.height, petSize },
-        currentObstacles(),
-      );
-      facing = newPos.x < position.x ? "left" : newPos.x > position.x ? "right" : facing;
-      position = newPos;
+      // REQ-120 — at a viewport edge the window follows the pet's un-clamped
+      // step so she appears to walk across the desktop; when the work area or
+      // a missing cache blocks that, the classic in-window wander runs
+      // unchanged.
+      if (!tryRoamStep(now)) {
+        const newPos = nextWanderPosition(
+          position,
+          { width: viewportSize.width, height: viewportSize.height, petSize },
+          currentObstacles(),
+        );
+        facing = newPos.x < position.x ? "left" : newPos.x > position.x ? "right" : facing;
+        position = newPos;
+      }
     }
 
     // While a tap-driven action sequence is mid-play, keep its animation pinned
@@ -998,6 +1101,10 @@
     stableWinSamples = 0;
     dragStartWinPos = null;
     lastWinPos = null;
+    // REQ-120 — the OS drag invalidates the cached window position; the next
+    // walk tick re-reads it before any edge-walking shift.
+    roamCache = null;
+    roamRefreshedAt = 0;
     playSteps([{ animation: GRAB_ANIMATION, durationMs: 15_000 }]);
     getCurrentWindow()
       .outerPosition()
