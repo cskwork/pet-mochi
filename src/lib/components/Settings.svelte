@@ -329,6 +329,14 @@
           Sound effects (tiny chirps on feed/pat/play — Mochi never beeps on her own)
         </label>
         <label class="row">
+          <input
+            type="checkbox"
+            bind:checked={settings.desktopNotifications}
+            onchange={save}
+          />
+          Desktop notifications (critical needs only)
+        </label>
+        <label class="row">
           <input type="checkbox" bind:checked={settings.memoryEnabled} />
           Memory enabled
         </label>
