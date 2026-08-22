@@ -44,6 +44,7 @@
     HATCHDAY_MEMORY_TYPE,
     ritualForTransition,
     landingSteps,
+    resolveStageTheme,
     GRAB_ANIMATION,
     LANDING_STABLE_SAMPLES,
     CHOREOGRAPHY_CATALOG,
@@ -332,6 +333,10 @@
     if (lastPeriod !== null && period !== lastPeriod) {
       const ritual = ritualForTransition(lastPeriod, period, pet.currentAnimation);
       eventBus.dispatch({ type: "TIME_OF_DAY_CHANGED", period }, pet);
+      // REQ-118 — in "auto" mode the stage theme follows the new period; this
+      // transition branch already runs on every period change, so no new
+      // listener is needed for the live swap.
+      if (currentStageBackground === "auto") applyStageBackground("auto", period);
       if (ritual && now >= actionPlayingUntil) {
         playSteps(ritual.steps);
         if (ritual.bubble) flashBubble(`${pet.name}: ${ritual.bubble}`, 3_000);
@@ -457,10 +462,20 @@
   // (including "transparent") clears the attribute so the overlay stays
   // see-through. Mirrors STAGE_BACKGROUNDS in src-tauri/src/models.rs.
   const STAGE_BACKGROUND_THEMES = new Set(["cream", "blossom", "mint", "night"]);
+  // REQ-118 — remembers the raw setting so a period transition can re-resolve
+  // the "auto" theme without waiting for the next settings change.
+  let currentStageBackground: string | undefined;
 
-  function applyStageBackground(value: string | undefined) {
-    if (typeof value === "string" && STAGE_BACKGROUND_THEMES.has(value)) {
-      document.body.dataset.stageBackground = value;
+  function applyStageBackground(
+    value: string | undefined,
+    period: Period = deriveTimeOfDay(),
+  ) {
+    currentStageBackground = value;
+    // REQ-118 — "auto" resolves to the theme for the current period; every
+    // other value applies (or clears) exactly as before.
+    const theme = value === "auto" ? resolveStageTheme(period) : value;
+    if (typeof theme === "string" && STAGE_BACKGROUND_THEMES.has(theme)) {
+      document.body.dataset.stageBackground = theme;
     } else {
       delete document.body.dataset.stageBackground;
     }
