@@ -32,10 +32,6 @@
     ritualForTransition,
     landingSteps,
     resolveStageTheme,
-    nextWanderDelta,
-    advanceRoam,
-    planMonitorCrossing,
-    type MonitorInfo,
     newNotificationGate,
     notificationCandidate,
     notificationCopy,
@@ -58,7 +54,6 @@
   } from "../sim";
   import { api } from "../bridge/api";
   import { notifyDesktop } from "../bridge/notify";
-  import { getWorkArea, listMonitors, type WorkArea } from "../bridge/roamer";
   import { listen } from "../bridge/tauri";
   import { disposeSfx, playSfx, setSfxEnabled } from "../audio/sfx";
   import { eventBus } from "../events/bus";
@@ -66,8 +61,8 @@
   import { createSnackTray, SNACK_TRAY_H, SNACK_TRAY_W } from "./snackTray.svelte";
   import { createGifts } from "./gifts.svelte";
   import { createParticles } from "./particles.svelte";
+  import { createRoam } from "./roam.svelte";
   import { Window, cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
-  import { PhysicalPosition } from "@tauri-apps/api/dpi";
 
   type Props = { petSize?: number };
   let { petSize = 140 }: Props = $props();
@@ -150,23 +145,20 @@
   let dragStartWinPos: { x: number; y: number } | null = null;
   let lastWinPos: { x: number; y: number } | null = null;
   let stableWinSamples = 0;
-  // REQ-120 — screen-edge walking cache. The work area is logical px (what
-  // the sim speaks); the window position is kept in BOTH spaces because the
-  // OS truth is physical — only step deltas cross the boundary (rounded
-  // once), so repeated logical↔physical conversion can't accumulate drift.
-  // Refreshed at most every 30s, piggybacking the walk branch of the 3s tick
-  // (no new timers).
-  type RoamCache = {
-    workArea: WorkArea;
-    /** REQ-121 — all named monitors (logical px) + the current one's id. */
-    monitors: MonitorInfo[];
-    currentMonitorId: string | null;
-    winPosPhysical: { x: number; y: number };
-    winPosLogical: { x: number; y: number };
-  };
-  let roamCache: RoamCache | null = null;
-  let roamRefreshedAt = 0;
-  const ROAM_REFRESH_MS = 30_000;
+  // REQ-120/121 — screen-edge walking + monitor-crossing state lives in
+  // roam.svelte.ts (REQ-124.2). It drives the shared scale-factor cache and
+  // reports landings back here.
+  const roam = createRoam({
+    onScaleFactor: (sf) => {
+      cachedScaleFactor = sf;
+    },
+    onCrossingLanded: (petPos) => {
+      position = petPos;
+      // A short beat from the existing walk pose so the re-entry reads as
+      // continuing motion (no new sprites).
+      playSteps([{ animation: "walk", durationMs: 600 }]);
+    },
+  });
   // REQ-113 animation intensity (0–1.5), live-updated via settings:changed.
   let animationIntensity = 1;
   // REQ-122 — opt-in critical-need desktop notifications. The pure gate in
@@ -297,149 +289,31 @@
 
   let wasReturning = false;
 
-  /** REQ-120 — refresh the roam cache when null or older than 30s; rides the
-   *  walk branch of the 3s tick (no new timers). */
-  function maybeRefreshRoamCache(now: number): void {
-    if (roamCache && now - roamRefreshedAt < ROAM_REFRESH_MS) return;
-    roamRefreshedAt = now;
-    void refreshRoamCache();
-  }
-
-  async function refreshRoamCache(): Promise<void> {
-    if (!api.hasBackend) return;
-    const [area, monitors, winPhys] = await Promise.all([
-      getWorkArea(),
-      listMonitors(),
-      getCurrentWindow().outerPosition().catch(() => null),
-    ]);
-    if (!area || !monitors || !winPhys) {
-      roamCache = null;
-      return;
-    }
-    cachedScaleFactor = area.scaleFactor;
-    roamCache = {
-      workArea: area,
-      monitors,
-      currentMonitorId: area.id,
-      winPosPhysical: { x: winPhys.x, y: winPhys.y },
-      winPosLogical: {
-        x: winPhys.x / area.scaleFactor,
-        y: winPhys.y / area.scaleFactor,
-      },
-    };
-  }
-
   /**
-   * REQ-120 — one edge-walking attempt for this tick. Returns true when the
+   * REQ-120/121 — one roam attempt for this tick, delegating the cache +
+   * window-shift machinery to the roam composable. Returns true when the
    * window was shifted or a crossing was planned (pet position applied);
    * false means the caller falls back to the classic in-window wander
    * (interior step, no cache yet, or a work-area clamp — which is exactly
-   * the pre-REQ-120 behavior). REQ-121 — the crossing is evaluated FIRST so
-   * it wins whenever both a crossing and an edge shift could apply.
+   * the pre-REQ-120 behavior).
    */
   function tryRoamStep(now: number, mood: Mood): boolean {
-    if (!api.hasBackend) return false;
-    maybeRefreshRoamCache(now);
-    const cache = roamCache;
-    if (!cache) return false;
-    if (tryMonitorCrossing(cache, mood)) return true;
-    const step = nextWanderDelta();
-    const roam = advanceRoam(
-      cache.winPosLogical,
-      position,
-      step,
-      cache.workArea,
-      viewportSize,
-      petSize,
-    );
-    if (!roam) return false;
-    const shifted =
-      roam.winPos.x !== cache.winPosLogical.x || roam.winPos.y !== cache.winPosLogical.y;
-    if (!shifted) return false; // work-area clamp — the classic path clamps too
-    facing = step.x < 0 ? "left" : step.x > 0 ? "right" : facing;
-    position = roam.petPos;
-    applyWindowShift(step.x, step.y);
-    return true;
-  }
-
-  /** REQ-120 — fire-and-forget window shift; window moves never focus. */
-  function applyWindowShift(dxLogical: number, dyLogical: number): void {
-    const cache = roamCache;
-    if (!cache) return;
-    const dx = Math.round(dxLogical * cache.workArea.scaleFactor);
-    const dy = Math.round(dyLogical * cache.workArea.scaleFactor);
-    const phys = { x: cache.winPosPhysical.x + dx, y: cache.winPosPhysical.y + dy };
-    roamCache = {
-      ...cache,
-      winPosPhysical: phys,
-      winPosLogical: {
-        x: cache.winPosLogical.x + dxLogical,
-        y: cache.winPosLogical.y + dyLogical,
-      },
-    };
-    getCurrentWindow()
-      .setPosition(new PhysicalPosition(phys.x, phys.y))
-      .catch(() => undefined);
-  }
-
-  /**
-   * REQ-121 — occasionally walk off the monitor edge onto the adjacent one.
-   * The pure planner owns gating (mood, seeded probability, edge + adjacency);
-   * this applies the plan fire-and-forget and NEVER focuses the window. The
-   * physical target is computed through the TARGET monitor's scaleFactor
-   * (per-monitor conversion, per the spec); the cache refresh that follows
-   * the move re-anchors on the new current monitor.
-   */
-  function tryMonitorCrossing(cache: RoamCache, mood: Mood): boolean {
-    if (!cache.currentMonitorId) return false;
-    const plan = planMonitorCrossing(
-      cache.winPosLogical,
-      position,
-      cache.monitors,
-      cache.currentMonitorId,
+    const result = roam.tryStep({
+      now,
       mood,
-      Math.random,
-      viewportSize,
+      petPos: position,
+      viewport: viewportSize,
       petSize,
-    );
-    if (!plan) return false;
-    const target = cache.monitors.find((m) => m.id === plan.targetMonitorId);
-    const sf = target?.scaleFactor ?? cache.workArea.scaleFactor;
-    const phys = {
-      x: Math.round(plan.winPosAfter.x * sf),
-      y: Math.round(plan.winPosAfter.y * sf),
-    };
-    // Optimistic cache update; the refresh after the move is authoritative.
-    roamCache = {
-      ...cache,
-      winPosPhysical: phys,
-      winPosLogical: plan.winPosAfter,
-    };
-    // Entering from the target's right edge → she walks in heading left.
-    facing = plan.entryEdge === "right" ? "left" : "right";
-    getCurrentWindow()
-      .setPosition(new PhysicalPosition(phys.x, phys.y))
-      .then(() => {
-        position = plan.petPosAfter;
-        // A short beat from the existing walk pose so the re-entry reads as
-        // continuing motion (no new sprites).
-        playSteps([{ animation: "walk", durationMs: 600 }]);
-        invalidateRoamCache();
-        void refreshRoamCache();
-      })
-      .catch((err) => {
-        // REQ-121 — hot-unplug: re-enumerate once and abort silently. The pet
-        // keeps her pre-crossing position (never set above on failure).
-        console.warn("monitor crossing failed", err);
-        invalidateRoamCache();
-        void refreshRoamCache();
-      });
+    });
+    if (result === null) return false;
+    if (result.type === "crossing") {
+      // Entering from the target's right edge → she walks in heading left.
+      facing = result.entryEdge === "right" ? "left" : "right";
+      return true;
+    }
+    facing = result.step.x < 0 ? "left" : result.step.x > 0 ? "right" : facing;
+    position = result.petPos;
     return true;
-  }
-
-  function invalidateRoamCache(): void {
-    roamCache = null;
-    roamRefreshedAt = 0;
   }
 
   function tick() {
@@ -1039,8 +913,7 @@
     lastWinPos = null;
     // REQ-120 — the OS drag invalidates the cached window position; the next
     // walk tick re-reads it before any edge-walking shift.
-    roamCache = null;
-    roamRefreshedAt = 0;
+    roam.invalidate();
     playSteps([{ animation: GRAB_ANIMATION, durationMs: 15_000 }]);
     getCurrentWindow()
       .outerPosition()
