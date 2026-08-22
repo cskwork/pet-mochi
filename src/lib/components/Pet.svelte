@@ -47,6 +47,8 @@
     resolveStageTheme,
     nextWanderDelta,
     advanceRoam,
+    planMonitorCrossing,
+    type MonitorInfo,
     newNotificationGate,
     notificationCandidate,
     notificationCopy,
@@ -58,6 +60,7 @@
     type ActionKey,
     type AnimationStep,
     type ChoreographyPick,
+    type Mood,
     type NudgeState,
     type Obstacle,
     type ParticleKind,
@@ -70,7 +73,7 @@
   } from "../sim";
   import { api } from "../bridge/api";
   import { notifyDesktop } from "../bridge/notify";
-  import { getWorkArea, type WorkArea } from "../bridge/roamer";
+  import { getWorkArea, listMonitors, type WorkArea } from "../bridge/roamer";
   import { listen } from "../bridge/tauri";
   import { disposeSfx, playSfx, setSfxEnabled } from "../audio/sfx";
   import { eventBus } from "../events/bus";
@@ -176,6 +179,9 @@
   // (no new timers).
   type RoamCache = {
     workArea: WorkArea;
+    /** REQ-121 — all named monitors (logical px) + the current one's id. */
+    monitors: MonitorInfo[];
+    currentMonitorId: string | null;
     winPosPhysical: { x: number; y: number };
     winPosLogical: { x: number; y: number };
   };
@@ -325,17 +331,20 @@
 
   async function refreshRoamCache(): Promise<void> {
     if (!api.hasBackend) return;
-    const [area, winPhys] = await Promise.all([
+    const [area, monitors, winPhys] = await Promise.all([
       getWorkArea(),
+      listMonitors(),
       getCurrentWindow().outerPosition().catch(() => null),
     ]);
-    if (!area || !winPhys) {
+    if (!area || !monitors || !winPhys) {
       roamCache = null;
       return;
     }
     cachedScaleFactor = area.scaleFactor;
     roamCache = {
       workArea: area,
+      monitors,
+      currentMonitorId: area.id,
       winPosPhysical: { x: winPhys.x, y: winPhys.y },
       winPosLogical: {
         x: winPhys.x / area.scaleFactor,
@@ -346,15 +355,18 @@
 
   /**
    * REQ-120 — one edge-walking attempt for this tick. Returns true when the
-   * window was shifted (pet position already applied); false means the caller
-   * falls back to the classic in-window wander (interior step, no cache yet,
-   * or a work-area clamp — which is exactly the pre-REQ-120 behavior).
+   * window was shifted or a crossing was planned (pet position applied);
+   * false means the caller falls back to the classic in-window wander
+   * (interior step, no cache yet, or a work-area clamp — which is exactly
+   * the pre-REQ-120 behavior). REQ-121 — the crossing is evaluated FIRST so
+   * it wins whenever both a crossing and an edge shift could apply.
    */
-  function tryRoamStep(now: number): boolean {
+  function tryRoamStep(now: number, mood: Mood): boolean {
     if (!api.hasBackend) return false;
     maybeRefreshRoamCache(now);
     const cache = roamCache;
     if (!cache) return false;
+    if (tryMonitorCrossing(cache, mood)) return true;
     const step = nextWanderDelta();
     const roam = advanceRoam(
       cache.winPosLogical,
@@ -394,6 +406,66 @@
       .catch(() => undefined);
   }
 
+  /**
+   * REQ-121 — occasionally walk off the monitor edge onto the adjacent one.
+   * The pure planner owns gating (mood, seeded probability, edge + adjacency);
+   * this applies the plan fire-and-forget and NEVER focuses the window. The
+   * physical target is computed through the TARGET monitor's scaleFactor
+   * (per-monitor conversion, per the spec); the cache refresh that follows
+   * the move re-anchors on the new current monitor.
+   */
+  function tryMonitorCrossing(cache: RoamCache, mood: Mood): boolean {
+    if (!cache.currentMonitorId) return false;
+    const plan = planMonitorCrossing(
+      cache.winPosLogical,
+      position,
+      cache.monitors,
+      cache.currentMonitorId,
+      mood,
+      Math.random,
+      viewportSize,
+      petSize,
+    );
+    if (!plan) return false;
+    const target = cache.monitors.find((m) => m.id === plan.targetMonitorId);
+    const sf = target?.scaleFactor ?? cache.workArea.scaleFactor;
+    const phys = {
+      x: Math.round(plan.winPosAfter.x * sf),
+      y: Math.round(plan.winPosAfter.y * sf),
+    };
+    // Optimistic cache update; the refresh after the move is authoritative.
+    roamCache = {
+      ...cache,
+      winPosPhysical: phys,
+      winPosLogical: plan.winPosAfter,
+    };
+    // Entering from the target's right edge → she walks in heading left.
+    facing = plan.entryEdge === "right" ? "left" : "right";
+    getCurrentWindow()
+      .setPosition(new PhysicalPosition(phys.x, phys.y))
+      .then(() => {
+        position = plan.petPosAfter;
+        // A short beat from the existing walk pose so the re-entry reads as
+        // continuing motion (no new sprites).
+        playSteps([{ animation: "walk", durationMs: 600 }]);
+        invalidateRoamCache();
+        void refreshRoamCache();
+      })
+      .catch((err) => {
+        // REQ-121 — hot-unplug: re-enumerate once and abort silently. The pet
+        // keeps her pre-crossing position (never set above on failure).
+        console.warn("monitor crossing failed", err);
+        invalidateRoamCache();
+        void refreshRoamCache();
+      });
+    return true;
+  }
+
+  function invalidateRoamCache(): void {
+    roamCache = null;
+    roamRefreshedAt = 0;
+  }
+
   function tick() {
     const now = Date.now();
     const elapsedSec = (now - lastTickAt) / 1000;
@@ -414,7 +486,7 @@
       // step so she appears to walk across the desktop; when the work area or
       // a missing cache blocks that, the classic in-window wander runs
       // unchanged.
-      if (!tryRoamStep(now)) {
+      if (!tryRoamStep(now, next.mood)) {
         const newPos = nextWanderPosition(
           position,
           { width: viewportSize.width, height: viewportSize.height, petSize },

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { advanceRoam } from "./roam";
+import {
+  advanceRoam,
+  MONITOR_CROSSING_PROBABILITY,
+  planMonitorCrossing,
+  type MonitorInfo,
+} from "./roam";
 import { nextWanderDelta } from "./movement";
 
 // Logical-unit fixtures: a 1920×1080 work area, a 360×360 viewport, and a
@@ -146,5 +151,182 @@ describe("REQ-120 advanceRoam — screen-edge walking", () => {
       PET_SIZE,
     );
     expect(out).toEqual({ winPos: { x: 100, y: 720 }, petPos: { x: 220, y: 220 } });
+  });
+});
+
+describe("REQ-121 planMonitorCrossing — multi-monitor roaming", () => {
+  const M1: MonitorInfo = {
+    id: "m1", x: 0, y: 0, width: 1920, height: 1080, scaleFactor: 1,
+  };
+  const M2: MonitorInfo = {
+    id: "m2", x: 1920, y: 0, width: 1920, height: 1080, scaleFactor: 1,
+  };
+  const MONITORS = [M1, M2];
+  const passRng = () => 0; // 0 < probability → crossing may proceed
+  const failRng = () => 0.999;
+
+  it("exports the ≤1-per-10-idle-minutes probability (1 tick / 3s)", () => {
+    expect(MONITOR_CROSSING_PROBABILITY).toBe(0.005);
+  });
+
+  it("returns null when no monitor is adjacent to the current edge", () => {
+    // Pet flush with m1's right edge, but m2 is 100px away → no crossing.
+    const out = planMonitorCrossing(
+      { x: 1560, y: 100 },
+      { x: 220, y: 60 },
+      [M1, { ...M2, x: 2020 }],
+      "m1",
+      "curious",
+      passRng,
+      VIEWPORT,
+      PET_SIZE,
+    );
+    expect(out).toBeNull();
+  });
+
+  it("returns null for moods other than curious/bored", () => {
+    for (const mood of ["happy", "tired", "hungry", "lonely"] as const) {
+      expect(
+        planMonitorCrossing(
+          { x: 1560, y: 100 },
+          { x: 220, y: 60 },
+          MONITORS,
+          "m1",
+          mood,
+          passRng,
+          VIEWPORT,
+          PET_SIZE,
+        ),
+      ).toBeNull();
+    }
+  });
+
+  it("crosses right: exits m1's right edge, re-enters m2 from its left edge", () => {
+    const out = planMonitorCrossing(
+      { x: 1560, y: 100 },
+      { x: 220, y: 60 },
+      MONITORS,
+      "m1",
+      "bored",
+      passRng,
+      VIEWPORT,
+      PET_SIZE,
+    );
+    expect(out).toEqual({
+      targetMonitorId: "m2",
+      entryEdge: "left",
+      winPosAfter: { x: 1920, y: 100 },
+      petPosAfter: { x: 0, y: 60 },
+    });
+  });
+
+  it("crosses left: exits m2's left edge, re-enters m1 from its right edge", () => {
+    const out = planMonitorCrossing(
+      { x: 1920, y: 100 },
+      { x: 0, y: 60 },
+      MONITORS,
+      "m2",
+      "curious",
+      passRng,
+      VIEWPORT,
+      PET_SIZE,
+    );
+    expect(out).toEqual({
+      targetMonitorId: "m1",
+      entryEdge: "right",
+      winPosAfter: { x: 1560, y: 100 },
+      petPosAfter: { x: 220, y: 60 },
+    });
+  });
+
+  it("treats x-ranges touching within a small tolerance as adjacent", () => {
+    // 1px gap between m1's right edge and m2's left edge — still a crossing.
+    const out = planMonitorCrossing(
+      { x: 1560, y: 100 },
+      { x: 220, y: 60 },
+      [M1, { ...M2, x: 1921 }],
+      "m1",
+      "curious",
+      passRng,
+      VIEWPORT,
+      PET_SIZE,
+    );
+    expect(out?.targetMonitorId).toBe("m2");
+  });
+
+  it("clamps the window's y into the target monitor's range", () => {
+    // Target sits 200px lower; a window at y=50 must clamp to the target's
+    // top edge (200).
+    const lower = { ...M2, y: 200 };
+    const out = planMonitorCrossing(
+      { x: 1560, y: 50 },
+      { x: 220, y: 60 },
+      [M1, lower],
+      "m1",
+      "curious",
+      passRng,
+      VIEWPORT,
+      PET_SIZE,
+    );
+    expect(out?.winPosAfter).toEqual({ x: 1920, y: 200 });
+  });
+
+  it("requires y-overlap between the monitors", () => {
+    const far = { ...M2, y: 1200 }; // below m1 entirely
+    const out = planMonitorCrossing(
+      { x: 1560, y: 100 },
+      { x: 220, y: 60 },
+      [M1, far],
+      "m1",
+      "curious",
+      passRng,
+      VIEWPORT,
+      PET_SIZE,
+    );
+    expect(out).toBeNull();
+  });
+
+  it("skips adjacent monitors too small to fit the window", () => {
+    const tiny = { ...M2, width: 200, height: 200 };
+    const out = planMonitorCrossing(
+      { x: 1560, y: 100 },
+      { x: 220, y: 60 },
+      [M1, tiny],
+      "m1",
+      "curious",
+      passRng,
+      VIEWPORT,
+      PET_SIZE,
+    );
+    expect(out).toBeNull();
+  });
+
+  it("probability gate: rng 0.999 never crosses, rng 0 does", () => {
+    const args = [
+      { x: 1560, y: 100 },
+      { x: 220, y: 60 },
+      MONITORS,
+      "m1",
+      "curious",
+    ] as const;
+    expect(planMonitorCrossing(...args, failRng, VIEWPORT, PET_SIZE)).toBeNull();
+    expect(planMonitorCrossing(...args, passRng, VIEWPORT, PET_SIZE)).not.toBeNull();
+  });
+
+  it("returns null when the pet is not near a monitor edge", () => {
+    // Window mid-monitor; pet at the window's right edge is nowhere near
+    // m1's right edge (1560 + 220 + 140 = 1920? window x=760: petAbs right
+    // = 760+220+140 = 1120, 800px short of the edge).
+    const out = planMonitorCrossing(
+      { x: 760, y: 100 },
+      { x: 220, y: 60 },
+      MONITORS,
+      "m1",
+      "curious",
+      passRng,
+      VIEWPORT,
+      PET_SIZE,
+    );
+    expect(out).toBeNull();
   });
 });
