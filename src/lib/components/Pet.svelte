@@ -32,11 +32,6 @@
     ritualForTransition,
     landingSteps,
     resolveStageTheme,
-    newNotificationGate,
-    notificationCandidate,
-    notificationCopy,
-    recordNotification,
-    shouldNotify,
     GRAB_ANIMATION,
     LANDING_STABLE_SAMPLES,
     type ActionKey,
@@ -53,7 +48,6 @@
     type SnackKey,
   } from "../sim";
   import { api } from "../bridge/api";
-  import { notifyDesktop } from "../bridge/notify";
   import { listen } from "../bridge/tauri";
   import { disposeSfx, playSfx, setSfxEnabled } from "../audio/sfx";
   import { eventBus } from "../events/bus";
@@ -62,6 +56,7 @@
   import { createGifts } from "./gifts.svelte";
   import { createParticles } from "./particles.svelte";
   import { createRoam } from "./roam.svelte";
+  import { createNotify } from "./notify.svelte";
   import { Window, cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
 
   type Props = { petSize?: number };
@@ -161,16 +156,9 @@
   });
   // REQ-113 animation intensity (0–1.5), live-updated via settings:changed.
   let animationIntensity = 1;
-  // REQ-122 — opt-in critical-need desktop notifications. The pure gate in
-  // sim/notifications.ts owns every suppression rule; the stamps record even
-  // when the OS declines delivery so a denied permission can't re-prompt
-  // every tick. Rides the 3s tick — no new timers.
-  let desktopNotifications = false;
-  let notificationGate = newNotificationGate();
-  const bootAt = Date.now();
-  // True while the settings window holds focus — the user is already looking
-  // at Mochi, so notifications are suppressed (REQ-122).
-  let settingsFocused = false;
+  // REQ-122 — opt-in critical-need desktop notifications: gate runtime lives
+  // in notify.svelte.ts (REQ-124.2).
+  const notify = createNotify();
   let unlistenSettingsFocus: (() => void) | null = null;
   let unlistenSettingsBlur: (() => void) | null = null;
   let unlistenSettings: (() => void) | null = null;
@@ -450,20 +438,7 @@
 
     // REQ-122 — opt-in desktop notification when a need crosses critical.
     // Candidate + verdict come from the pure module; the bridge never throws.
-    if (desktopNotifications) {
-      const candidate = notificationCandidate(pet);
-      if (
-        candidate !== null &&
-        shouldNotify(candidate, notificationGate, now, {
-          uptimeMs: now - bootAt,
-          settingsFocused,
-        })
-      ) {
-        notificationGate = recordNotification(notificationGate, candidate, now);
-        const copy = notificationCopy(candidate, pet.name);
-        void notifyDesktop(copy.title, copy.body);
-      }
-    }
+    notify.evaluate(pet, now);
 
     eventBus.dispatch({ type: "IDLE_TICK" }, pet);
 
@@ -1302,7 +1277,7 @@
       try {
         const settings = await api.getSettings();
         animationIntensity = clampIntensity(settings.animationIntensity);
-        desktopNotifications = settings.desktopNotifications;
+        notify.setEnabled(settings.desktopNotifications);
         applyStageBackground(settings.stageBackground);
         setSfxEnabled(settings.soundEffects);
       } catch {
@@ -1325,7 +1300,7 @@
             setSfxEnabled(payload.soundEffects);
           }
           if (payload && typeof payload.desktopNotifications === "boolean") {
-            desktopNotifications = payload.desktopNotifications;
+            notify.setEnabled(payload.desktopNotifications);
           }
         });
       } catch {
@@ -1341,11 +1316,11 @@
           unlistenSettingsFocus = await settingsWin.listen(
             "tauri://focus",
             () => {
-              settingsFocused = true;
+              notify.setFocused(true);
             },
           );
           unlistenSettingsBlur = await settingsWin.listen("tauri://blur", () => {
-            settingsFocused = false;
+            notify.setFocused(false);
           });
         }
       } catch {
