@@ -356,6 +356,7 @@
           Stage background
           <select bind:value={settings.stageBackground} onchange={save}>
             <option value="transparent">Fully transparent (desktop overlay)</option>
+            <option value="auto">Auto (follows time of day)</option>
             <option value="cream">Cream card</option>
             <option value="blossom">Blossom pink</option>
             <option value="mint">Mint</option>
