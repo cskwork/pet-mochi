@@ -31,17 +31,6 @@
     SNACK_KEYS,
     SNACKS,
     greetingForReturn,
-    canLeaveKeepsake,
-    pickTrinket,
-    keepsakeMemoryContent,
-    keepsakeBubble,
-    lastKeepsakeAt,
-    KEEPSAKE_MEMORY_TYPE,
-    hatchdayStatus,
-    hasCelebratedHatchdayThisYear,
-    hatchdayMemoryContent,
-    hatchdayBubble,
-    HATCHDAY_MEMORY_TYPE,
     ritualForTransition,
     landingSteps,
     resolveStageTheme,
@@ -56,7 +45,6 @@
     shouldNotify,
     GRAB_ANIMATION,
     LANDING_STABLE_SAMPLES,
-    CHOREOGRAPHY_CATALOG,
     type ActionKey,
     type AnimationStep,
     type ChoreographyPick,
@@ -79,6 +67,7 @@
   import { eventBus } from "../events/bus";
   import { tryEnterAutonomous, type LastAutonomous } from "./autonomousGate";
   import { createSnackTray, SNACK_TRAY_H, SNACK_TRAY_W } from "./snackTray.svelte";
+  import { createGifts } from "./gifts.svelte";
   import { Window, cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
   import { PhysicalPosition } from "@tauri-apps/api/dpi";
 
@@ -150,14 +139,9 @@
   // REQ-107 snack tray + favorite discovery — state machine lives in
   // snackTray.svelte.ts (REQ-124.2).
   const snack = createSnackTray();
-  // REQ-109 keepsakes / REQ-110 hatch-day. Both gate on the restored memory
-  // list so a restart can never duplicate a gift or a yearly celebration.
-  let memoriesRestored = false;
-  let lastKeepsakeAtIso: string | null = null;
-  let lastKeepsakeCheckAt = 0;
-  let hatchdayCelebratedYearly = false;
-  let monthlyHeartsCelebrated = false;
-  let lastDayStamp = "";
+  // REQ-109 keepsakes / REQ-110 hatch-day — runtime flags live in
+  // gifts.svelte.ts (REQ-124.2). Celebrations drive Pet-owned channels.
+  const gifts = createGifts({ playSteps, spawnBurst, flashBubble });
   // REQ-111 time-of-day rituals.
   let lastPeriod: Period | null = null;
   // REQ-102 idle-triggered status report. `idleSince === 0` means "not idle".
@@ -245,7 +229,6 @@
   const BUBBLE_GAP = 10;
   const TAIL_INSET = 18;
   // v0.2 (PRD §27) constants.
-  const KEEPSAKE_CHECK_MS = 10 * 60_000;
   const REPORT_RETRY_BACKOFF_MS = 10 * 60_000;
   // SNACK_TRAY_* constants moved to snackTray.svelte.ts (REQ-124.2).
   // Ignore "window stopped moving" verdicts in the first moments of a drag —
@@ -548,26 +531,11 @@
 
     // REQ-110 — a day rollover mid-session re-checks the hatch-day and
     // re-arms the once-per-session monthly hearts.
-    const dayStamp = new Date(now).toDateString();
-    if (dayStamp !== lastDayStamp) {
-      const rolled = lastDayStamp !== "";
-      lastDayStamp = dayStamp;
-      if (rolled) {
-        monthlyHeartsCelebrated = false;
-        maybeCelebrateHatchday(now);
-      }
-    }
+    gifts.onDayRollover(now, pet);
 
     // REQ-109 — keepsake gate, evaluated at most every 10 minutes.
-    if (
-      api.hasBackend &&
-      memoriesRestored &&
-      now - lastKeepsakeCheckAt >= KEEPSAKE_CHECK_MS
-    ) {
-      lastKeepsakeCheckAt = now;
-      if (now >= actionPlayingUntil && canLeaveKeepsake(pet, lastKeepsakeAtIso, now)) {
-        void leaveKeepsake(now);
-      }
+    if (gifts.keepsakeDue(pet, now, () => actionPlayingUntil)) {
+      void gifts.leaveKeepsake(pet, now, () => actionPlayingUntil);
     }
 
     // REQ-102 — idle-window tracking + autonomous §9.8 status report. The
@@ -786,59 +754,6 @@
       snack.markFavoriteDiscovered();
     }
     scheduleSave();
-  }
-
-  // ===== REQ-109 keepsake gifts =====
-  async function leaveKeepsake(now: number) {
-    const prior = lastKeepsakeAtIso;
-    const nowIso = new Date(now).toISOString();
-    lastKeepsakeAtIso = nowIso;
-    try {
-      const trinket = pickTrinket(pet.id, nowIso);
-      await api.createMemory({
-        type: KEEPSAKE_MEMORY_TYPE,
-        content: keepsakeMemoryContent(trinket),
-        importance: 2,
-        confidence: 1,
-      });
-      // Re-check after the await — an action the user started while the
-      // write was in flight shouldn't be stomped by the gift choreography.
-      if (Date.now() >= actionPlayingUntil) {
-        playSteps(CHOREOGRAPHY_CATALOG.delight_burst.variants[0]);
-      }
-      spawnBurst("confetti");
-      playSfx("sparkle");
-      flashBubble(keepsakeBubble(pet.name, trinket), 5_000);
-    } catch {
-      // Backend hiccup — roll back the stamp so the 10-minute check retries.
-      lastKeepsakeAtIso = prior;
-    }
-  }
-
-  // ===== REQ-110 hatch-day =====
-  function maybeCelebrateHatchday(now: number) {
-    const today = new Date(now);
-    const status = hatchdayStatus(pet.createdAt, today);
-    if (status.yearly && !hatchdayCelebratedYearly && api.hasBackend && memoriesRestored) {
-      hatchdayCelebratedYearly = true;
-      void (async () => {
-        await api
-          .createMemory({
-            type: HATCHDAY_MEMORY_TYPE,
-            content: hatchdayMemoryContent(status.ageYears),
-            importance: 3,
-            confidence: 1,
-          })
-          .catch(() => undefined);
-        playSteps(CHOREOGRAPHY_CATALOG.delight_burst.variants[0]);
-        spawnBurst("confetti");
-        playSfx("chime");
-        flashBubble(hatchdayBubble(pet.name, status.ageYears), 6_000);
-      })();
-    } else if (status.monthly && !monthlyHeartsCelebrated) {
-      monthlyHeartsCelebrated = true;
-      spawnBurst("hearts");
-    }
   }
 
   /** Add a file to the consent queue, ignoring duplicates so the watcher's
@@ -1513,7 +1428,7 @@
     }
 
     lastTickAt = Date.now();
-    lastDayStamp = new Date().toDateString();
+    gifts.primeDayStamp(Date.now());
     tickTimer = setInterval(tick, TICK_MS);
 
     // Gates every decorative motion path (REQ-113) and follows OS toggles
@@ -1591,9 +1506,7 @@
       try {
         const memories = await api.listMemories(200);
         snack.restoreFavorite(isFavoriteDiscoveredInMemories(memories));
-        lastKeepsakeAtIso = lastKeepsakeAt(memories);
-        hatchdayCelebratedYearly = hasCelebratedHatchdayThisYear(memories, new Date());
-        memoriesRestored = true;
+        gifts.restore(memories);
       } catch (err) {
         console.warn("memory restore failed", err);
       }
@@ -1683,7 +1596,7 @@
       { animation: "wiggle", durationMs: 450 },
     ]);
     eventBus.dispatch({ type: "APP_STARTED" }, pet);
-    maybeCelebrateHatchday(Date.now());
+    gifts.maybeCelebrateHatchday(pet, Date.now());
     flashBubble("I'm awake. I'll stay out of the way.", 5_000);
   });
 
