@@ -45,6 +45,11 @@
     ritualForTransition,
     landingSteps,
     resolveStageTheme,
+    newNotificationGate,
+    notificationCandidate,
+    notificationCopy,
+    recordNotification,
+    shouldNotify,
     GRAB_ANIMATION,
     LANDING_STABLE_SAMPLES,
     CHOREOGRAPHY_CATALOG,
@@ -62,11 +67,12 @@
     type SnackKey,
   } from "../sim";
   import { api } from "../bridge/api";
+  import { notifyDesktop } from "../bridge/notify";
   import { listen } from "../bridge/tauri";
   import { disposeSfx, playSfx, setSfxEnabled } from "../audio/sfx";
   import { eventBus } from "../events/bus";
   import { tryEnterAutonomous, type LastAutonomous } from "./autonomousGate";
-  import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
+  import { Window, cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
 
   type Props = { petSize?: number };
   let { petSize = 140 }: Props = $props();
@@ -160,6 +166,18 @@
   let stableWinSamples = 0;
   // REQ-113 animation intensity (0–1.5), live-updated via settings:changed.
   let animationIntensity = 1;
+  // REQ-122 — opt-in critical-need desktop notifications. The pure gate in
+  // sim/notifications.ts owns every suppression rule; the stamps record even
+  // when the OS declines delivery so a denied permission can't re-prompt
+  // every tick. Rides the 3s tick — no new timers.
+  let desktopNotifications = false;
+  let notificationGate = newNotificationGate();
+  const bootAt = Date.now();
+  // True while the settings window holds focus — the user is already looking
+  // at Mochi, so notifications are suppressed (REQ-122).
+  let settingsFocused = false;
+  let unlistenSettingsFocus: (() => void) | null = null;
+  let unlistenSettingsBlur: (() => void) | null = null;
   let unlistenSettings: (() => void) | null = null;
 
   let tickTimer: ReturnType<typeof setInterval> | undefined;
@@ -418,6 +436,23 @@
         .finally(() => {
           reportGateInFlight = false;
         });
+    }
+
+    // REQ-122 — opt-in desktop notification when a need crosses critical.
+    // Candidate + verdict come from the pure module; the bridge never throws.
+    if (desktopNotifications) {
+      const candidate = notificationCandidate(pet);
+      if (
+        candidate !== null &&
+        shouldNotify(candidate, notificationGate, now, {
+          uptimeMs: now - bootAt,
+          settingsFocused,
+        })
+      ) {
+        notificationGate = recordNotification(notificationGate, candidate, now);
+        const copy = notificationCopy(candidate, pet.name);
+        void notifyDesktop(copy.title, copy.body);
+      }
     }
 
     eventBus.dispatch({ type: "IDLE_TICK" }, pet);
@@ -1351,6 +1386,7 @@
       try {
         const settings = await api.getSettings();
         animationIntensity = clampIntensity(settings.animationIntensity);
+        desktopNotifications = settings.desktopNotifications;
         applyStageBackground(settings.stageBackground);
         setSfxEnabled(settings.soundEffects);
       } catch {
@@ -1361,6 +1397,7 @@
           animationIntensity?: number;
           stageBackground?: string;
           soundEffects?: boolean;
+          desktopNotifications?: boolean;
         }>("settings:changed", (payload) => {
           if (payload && typeof payload.animationIntensity === "number") {
             animationIntensity = clampIntensity(payload.animationIntensity);
@@ -1371,9 +1408,32 @@
           if (payload && typeof payload.soundEffects === "boolean") {
             setSfxEnabled(payload.soundEffects);
           }
+          if (payload && typeof payload.desktopNotifications === "boolean") {
+            desktopNotifications = payload.desktopNotifications;
+          }
         });
       } catch {
         // Live updates are a nicety; the mount-time read above still applied.
+      }
+
+      // REQ-122 — best-effort focus tracking on the settings window: while it
+      // holds focus the user is already looking at Mochi, so the notification
+      // gate suppresses. Two one-shot setup listeners; no timer involved.
+      try {
+        const settingsWin = await Window.getByLabel("settings");
+        if (settingsWin) {
+          unlistenSettingsFocus = await settingsWin.listen(
+            "tauri://focus",
+            () => {
+              settingsFocused = true;
+            },
+          );
+          unlistenSettingsBlur = await settingsWin.listen("tauri://blur", () => {
+            settingsFocused = false;
+          });
+        }
+      } catch {
+        // Untracked focus simply means no extra suppression.
       }
 
       // REQ-107/109/110 — restore care-loop flags from durable memories so a
@@ -1494,6 +1554,8 @@
     window.removeEventListener("pointermove", onPointerMove);
     if (unlistenInbox) unlistenInbox();
     if (unlistenSettings) unlistenSettings();
+    if (unlistenSettingsFocus) unlistenSettingsFocus();
+    if (unlistenSettingsBlur) unlistenSettingsBlur();
     if (unsubscribeBus) unsubscribeBus();
     if (reducedMotionCleanup) reducedMotionCleanup();
     delete document.body.dataset.stageBackground;
