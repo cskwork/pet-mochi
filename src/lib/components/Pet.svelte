@@ -24,8 +24,6 @@
     stepsForPick,
     validateChoreographyPayload,
     nextQuirk,
-    particleSpecsFor,
-    MAX_LIVE_PARTICLES,
     applySnackFeed,
     isFavoriteDiscoveredInMemories,
     SNACK_KEYS,
@@ -52,7 +50,6 @@
     type NudgeState,
     type Obstacle,
     type ParticleKind,
-    type ParticleSpec,
     type Period,
     type PetEvent,
     type PetState,
@@ -68,6 +65,7 @@
   import { tryEnterAutonomous, type LastAutonomous } from "./autonomousGate";
   import { createSnackTray, SNACK_TRAY_H, SNACK_TRAY_W } from "./snackTray.svelte";
   import { createGifts } from "./gifts.svelte";
+  import { createParticles } from "./particles.svelte";
   import { Window, cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
   import { PhysicalPosition } from "@tauri-apps/api/dpi";
 
@@ -127,11 +125,9 @@
   let landingPulse = $state(false);
   let boingTimer: ReturnType<typeof setTimeout> | undefined;
   let landingTimer: ReturnType<typeof setTimeout> | undefined;
-  // REQ-105 particle bursts. Each live particle snapshots its spawn origin so
-  // a wandering pet doesn't drag old hearts along with it.
-  type LiveParticle = ParticleSpec & { id: number; x: number; y: number };
-  let particles = $state<LiveParticle[]>([]);
-  let particleSeq = 0;
+  // REQ-105 particle bursts — live-particle store lives in
+  // particles.svelte.ts (REQ-124.2).
+  const particles = createParticles();
   let reducedMotion = false;
   let reducedMotionCleanup: (() => void) | null = null;
   // REQ-106 idle micro-quirks.
@@ -694,31 +690,14 @@
     }, 420);
   }
 
-  /** REQ-105 — spawn a particle burst at the pet's current center. Decorative
-   *  only: skipped entirely under reduced motion or intensity 0, capped at
-   *  MAX_LIVE_PARTICLES concurrent nodes, each node removes itself on
-   *  animationend. */
+  /** REQ-105 — spawn a particle burst at the pet's current center. The
+   *  position is passed at call time so the store never tracks it. */
   function spawnBurst(kind: ParticleKind) {
-    if (reducedMotion) return;
-    const specs = particleSpecsFor(kind, Math.random, animationIntensity);
-    if (specs.length === 0) return;
-    const cx = position.x + petSize / 2;
-    const cy = position.y + petSize * 0.35;
-    const fresh: LiveParticle[] = specs.map((s) => ({
-      ...s,
-      id: ++particleSeq,
-      x: cx,
-      y: cy,
-    }));
-    const merged = [...particles, ...fresh];
-    particles =
-      merged.length > MAX_LIVE_PARTICLES
-        ? merged.slice(merged.length - MAX_LIVE_PARTICLES)
-        : merged;
-  }
-
-  function removeParticle(id: number) {
-    particles = particles.filter((p) => p.id !== id);
+    particles.spawn(
+      kind,
+      { x: position.x + petSize / 2, y: position.y + petSize * 0.35 },
+      { reducedMotion, intensity: animationIntensity },
+    );
   }
 
   // ===== REQ-107 snack tray =====
@@ -1652,13 +1631,13 @@
     />
   </button>
 
-  {#if particles.length > 0}
+  {#if particles.list.length > 0}
     <div class="particle-layer" aria-hidden="true">
-      {#each particles as p (p.id)}
+      {#each particles.list as p (p.id)}
         <span
           class="particle color-{p.colorIndex}"
           style="left: {p.x}px; top: {p.y}px; font-size: {p.sizePx}px; --dx: {p.dx}px; --rise: {p.rise}px; animation-duration: {p.durationMs}ms; animation-delay: {p.delayMs}ms;"
-          onanimationend={() => removeParticle(p.id)}
+          onanimationend={() => particles.remove(p.id)}
         >{p.glyph}</span>
       {/each}
     </div>
