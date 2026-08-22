@@ -78,6 +78,7 @@
   import { disposeSfx, playSfx, setSfxEnabled } from "../audio/sfx";
   import { eventBus } from "../events/bus";
   import { tryEnterAutonomous, type LastAutonomous } from "./autonomousGate";
+  import { createSnackTray, SNACK_TRAY_H, SNACK_TRAY_W } from "./snackTray.svelte";
   import { Window, cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
   import { PhysicalPosition } from "@tauri-apps/api/dpi";
 
@@ -146,11 +147,9 @@
   let reducedMotionCleanup: (() => void) | null = null;
   // REQ-106 idle micro-quirks.
   let lastQuirkAt: number | null = null;
-  // REQ-107 snack tray + favorite discovery.
-  let snackTrayOpen = $state(false);
-  let snackTrayTimer: ReturnType<typeof setTimeout> | undefined;
-  let snackTrayEl: HTMLDivElement | null = $state(null);
-  let favoriteDiscovered = false;
+  // REQ-107 snack tray + favorite discovery — state machine lives in
+  // snackTray.svelte.ts (REQ-124.2).
+  const snack = createSnackTray();
   // REQ-109 keepsakes / REQ-110 hatch-day. Both gate on the restored memory
   // list so a restart can never duplicate a gift or a yearly celebration.
   let memoriesRestored = false;
@@ -248,9 +247,7 @@
   // v0.2 (PRD §27) constants.
   const KEEPSAKE_CHECK_MS = 10 * 60_000;
   const REPORT_RETRY_BACKOFF_MS = 10 * 60_000;
-  const SNACK_TRAY_TIMEOUT_MS = 8_000;
-  const SNACK_TRAY_W = 232;
-  const SNACK_TRAY_H = 66;
+  // SNACK_TRAY_* constants moved to snackTray.svelte.ts (REQ-124.2).
   // Ignore "window stopped moving" verdicts in the first moments of a drag —
   // the position is briefly stable before the OS loop starts reporting moves.
   const DRAG_MIN_SETTLE_MS = 400;
@@ -757,35 +754,12 @@
   }
 
   // ===== REQ-107 snack tray =====
-  function openSnackTray() {
-    snackTrayOpen = true;
-    playSfx("pop");
-    if (snackTrayTimer) clearTimeout(snackTrayTimer);
-    snackTrayTimer = setTimeout(() => {
-      snackTrayOpen = false;
-      snackTrayTimer = undefined;
-    }, SNACK_TRAY_TIMEOUT_MS);
-    // Move focus to the first snack so keyboard users land inside the menu
-    // (and Escape-to-close works immediately).
-    requestAnimationFrame(() => {
-      snackTrayEl?.querySelector<HTMLButtonElement>(".snack")?.focus();
-    });
-  }
-
-  function closeSnackTray() {
-    snackTrayOpen = false;
-    if (snackTrayTimer) {
-      clearTimeout(snackTrayTimer);
-      snackTrayTimer = undefined;
-    }
-  }
-
   async function onSnackPick(key: SnackKey) {
-    closeSnackTray();
+    snack.close();
     flashBusy("feed");
     lastInteractionAt = Date.now();
     recentPositive = true;
-    const result = applySnackFeed(pet, key, favoriteDiscovered);
+    const result = applySnackFeed(pet, key, snack.isFavoriteDiscovered());
     pet = result.state;
     playSteps(result.steps);
     triggerBoing();
@@ -806,16 +780,12 @@
     if (result.memory && api.hasBackend) {
       // Mark discovered regardless of persistence outcome so one session never
       // writes the memory twice; a failed write simply rediscovers next launch.
-      favoriteDiscovered = true;
+      snack.markFavoriteDiscovered();
       await api.createMemory(result.memory).catch(() => undefined);
     } else if (result.favoriteDiscovered) {
-      favoriteDiscovered = true;
+      snack.markFavoriteDiscovered();
     }
     scheduleSave();
-  }
-
-  function onSnackTrayKey(e: KeyboardEvent) {
-    if (e.key === "Escape") closeSnackTray();
   }
 
   // ===== REQ-109 keepsake gifts =====
@@ -1063,14 +1033,14 @@
     // REQ-107 — Feed opens the snack tray instead of feeding immediately;
     // pressing Feed again while it's open closes it.
     if (key === "feed") {
-      if (snackTrayOpen) {
-        closeSnackTray();
+      if (snack.open) {
+        snack.close();
       } else {
-        openSnackTray();
+        snack.openTray();
       }
       return;
     }
-    closeSnackTray();
+    snack.close();
     flashBusy(key);
     lastInteractionAt = Date.now();
     recentPositive = true;
@@ -1450,7 +1420,7 @@
     ) return true;
     if (isInsideRect(x, y, actionsBox())) return true;
     if (isInsideRect(x, y, statusBox())) return true;
-    if (snackTrayOpen && isInsideRect(x, y, snackTrayBox())) return true;
+    if (snack.open && isInsideRect(x, y, snackTrayBox())) return true;
     if (bubbleOpen) {
       // Bubble is positioned absolutely at bubblePlacement.{left,top}; size is
       // BUBBLE_W x BUBBLE_H. Hit-test that rect with HIT_PAD slop.
@@ -1620,7 +1590,7 @@
       // repeat this year's hatch-day.
       try {
         const memories = await api.listMemories(200);
-        favoriteDiscovered = isFavoriteDiscoveredInMemories(memories);
+        snack.restoreFavorite(isFavoriteDiscoveredInMemories(memories));
         lastKeepsakeAtIso = lastKeepsakeAt(memories);
         hatchdayCelebratedYearly = hasCelebratedHatchdayThisYear(memories, new Date());
         memoriesRestored = true;
@@ -1727,7 +1697,7 @@
     if (hitTestTimer) clearInterval(hitTestTimer);
     if (boingTimer) clearTimeout(boingTimer);
     if (landingTimer) clearTimeout(landingTimer);
-    if (snackTrayTimer) clearTimeout(snackTrayTimer);
+    snack.dispose();
     clearActionTimers();
     window.removeEventListener("resize", onResize);
     window.removeEventListener("pointermove", onPointerMove);
@@ -1781,15 +1751,15 @@
     </div>
   {/if}
 
-  {#if snackTrayOpen}
+  {#if snack.open}
     <div
       class="snack-tray"
-      bind:this={snackTrayEl}
+      bind:this={snack.trayEl}
       style="left: {snackTrayBox().left}px; top: {snackTrayBox().top}px; width: {SNACK_TRAY_W}px;"
       role="menu"
       aria-label="Pick a snack for Mochi"
       tabindex="-1"
-      onkeydown={onSnackTrayKey}
+      onkeydown={snack.onKey}
     >
       {#each SNACK_KEYS as key (key)}
         <button
@@ -1850,7 +1820,7 @@
       onReport={onReport}
       busy={busyAction}
       reporting={reporting}
-      feedExpanded={snackTrayOpen}
+      feedExpanded={snack.open}
     />
   </div>
 
