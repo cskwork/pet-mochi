@@ -91,6 +91,23 @@ describe("chooseMovement", () => {
       chooseMovement(s, { ...ctx, recentPositiveEvent: true }, seededRng),
     ).toBe("celebrate");
   });
+
+  // REQ-119 — at night a tired, unhurried pet sleeps instead of pacing: the
+  // sleep gate widens from energy < 15 to energy < 30 while boredom stays
+  // below 60. Daytime behavior is unchanged.
+  it("sleeps at night with energy 25 and low boredom, but idles by day", () => {
+    const s = { ...newPetState(), energy: 25, boredom: 20 };
+    const night = { ...ctx, timeOfDay: "night" as const };
+    expect(chooseMovement(s, night, seededRng)).toBe("sleep");
+    // Same stats in the afternoon fall through to the idle variants.
+    expect(["idle", "sit", "look_cursor"]).toContain(chooseMovement(s, ctx, seededRng));
+  });
+
+  it("still walks at night when boredom is 60 or higher", () => {
+    const s = { ...newPetState(), energy: 25, boredom: 80 };
+    const night = { ...ctx, timeOfDay: "night" as const };
+    expect(chooseMovement(s, night, seededRng)).toBe("walk");
+  });
 });
 
 describe("applyDecay", () => {

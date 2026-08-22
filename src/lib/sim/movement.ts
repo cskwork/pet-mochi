@@ -22,6 +22,12 @@ export function chooseMovement(
   if (state.energy < 15) return "sleep";
   if (ctx.userJustReturned) return "run";
   if (ctx.cursorNearPet) return "look_cursor";
+  // REQ-119 — at night a tired but unhurried pet curls up instead of pacing:
+  // the sleep gate widens from energy < 15 to energy < 30 while boredom
+  // stays below 60. Daytime behavior is unchanged.
+  if (ctx.timeOfDay === "night" && state.energy < 30 && state.boredom < 60) {
+    return "sleep";
+  }
   if (state.boredom > 75) return "walk";
   if (state.mood === "happy" && ctx.recentPositiveEvent) return "celebrate";
   return pick(IDLE_VARIANTS, rng);
