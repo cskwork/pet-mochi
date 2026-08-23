@@ -53,6 +53,9 @@ desktop). Reduced-motion unaffected (backgrounds are static).
 "night"`, sleep is chosen when `energy < 30` (vs 15) and `boredom < 60`, so a
 tired-at-night pet sleeps instead of pacing. Seeded tests extend
 `sim.test.ts`. No decay-rate changes — only movement selection.
+*Precedence note (QA L3):* interaction-derived states (`userJustReturned`,
+`cursorNearPet`) are evaluated earlier in `chooseMovement` and therefore
+outrank the night-sleep branch — intentional, interaction wins over bedtime.
 
 ### REQ-120 — Screen-edge walking (window follows pet)
 

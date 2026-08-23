@@ -1424,3 +1424,63 @@ Foundation (REQ-103 → 100 → 101 → 102) → Juice (REQ-104 → 105 → 106)
 Care loop (REQ-107 → 108 → 109 → 110) → Rhythm & touch (REQ-111 → 112) →
 Guardrails pass (REQ-113). Each step lands with unit tests for its pure
 logic and a full check run before the next step starts.
+
+---
+
+## 28. v0.2.x — Environment Pack (world awareness)
+
+> Origin: `docs/SPEC-ENVIRONMENT-PACK.md` (specifier phase, six-pack
+> methodology), folded into the PRD after QA review. Implementation lives on
+> `feat/environment-pack`.
+
+**Amendment to §27.2 principle 1** ("no notifications"): with **explicit
+user opt-in** (default off), Mochi may send an OS notification when a need
+crosses critical (hunger > 85, energy < 12, stress > 80). Copy stays kind,
+never guilty (REQ-108 vocabulary); per-kind 60-min and global 30-min
+cooldowns, a 10-min boot grace, and suppression while the settings window is
+focused. All other §27.2 anti-annoyance guardrails carry forward: no sound,
+no focus stealing, pull-never-push by default.
+
+**REQ-118:** `stage_background` gains `"auto"`: the theme resolves from the
+current time-of-day period (morning→blossom, afternoon→mint, evening→cream,
+night→night) through the existing background path and swaps live on
+`TIME_OF_DAY_CHANGED`. Pure resolver in `sim/ambient.ts`.
+
+**REQ-119:** At night, a tired pet sleeps: `chooseMovement` sleeps at
+energy < 30 (vs 15 by day) when boredom < 60. Interaction-derived states
+(cursor-near, just-returned) still take precedence over sleeping.
+
+**REQ-120:** Screen-edge walking: when the pet's wander step clamps at the
+viewport edge and the window can shift within the monitor bounds, the window
+follows by the same delta — the pet walks across the desktop. Pure planner
+in `sim/roam.ts`; window moves ride the 3s tick, fire-and-forget, never
+focus, and never fire while the user is dragging the window.
+
+**REQ-121:** Multi-monitor roaming: occasionally (seeded, ≤ ~1 crossing per
+10 idle minutes, curious/bored moods only) the pet walks off one monitor's
+edge and re-enters on the adjacent monitor. *Known limitation:* adjacency is
+computed in per-monitor logical space, so crossings are disabled on
+mixed-DPI setups where per-monitor scale factors differ (the no-op is
+silent and safe); tracked in BACKLOG for a single-space rewrite.
+
+**REQ-122:** Opt-in critical-need desktop notifications per the §27.2
+amendment above. Pure gate in `sim/notifications.ts` (kind, zero-guilt copy
+enforced by forbidden-phrase test); delivery via
+`tauri-plugin-notification`, stamps recorded before delivery so a denied
+permission cannot re-prompt every tick.
+
+**REQ-123:** Foundation: notification plugin + monitor-list/current-monitor
+capabilities (the only capability widening in this section), the
+`desktop_notifications` setting (serde-defaulted off), and `"auto"` in the
+stage-background closed list.
+
+**REQ-124:** Modularity pass: `Pet.svelte` logic extracted into five Svelte 5
+composables (`snackTray`, `gifts`, `particles`, `roam`, `notify` — pure
+moves, behavior unchanged), and `commands.rs` split by domain into
+`commands/{state,memory,chat,inbox,reports}.rs` (verified pure move; the
+`generate_handler!` registration list is unchanged).
+
+Acceptance: the four checks (`npm test`, `npm run check` 0/0,
+`cargo test --lib`, `cargo build`) pass at every step; no new persistent
+timers (REQ-113); `sim/` stays pure; the salience gate is untouched
+(notifications are deterministic, not LLM).
