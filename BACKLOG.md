@@ -170,6 +170,39 @@ which is small.
 
 ---
 
+## MEDIUM #22 — Multi-monitor crossing disabled on mixed-DPI setups (REQ-121)
+
+**Files**
+- `src/lib/bridge/roamer.ts` — `getMonitors()` divides each monitor rect by
+  its own `scaleFactor`
+- `src/lib/sim/roam.ts` — `planMonitorCrossing` adjacency + y-clamp math
+
+**Issue**
+Adacency is computed in per-monitor *logical* space. When two monitors have
+different scale factors, their logical rects overlap or gap incoherently
+(e.g. 1920-phys @1× + 2560-phys @1.25 → logical `0–1920` and `1536–2584`),
+so the "touching edges" test never passes and crossings silently no-op.
+The y-clamp would also mix units between monitors. Uniform-DPI setups work
+as specified; mixed-DPI degrades to REQ-120's single-monitor behavior.
+
+**Why deferred**
+Fixing it means rewriting the planner's geometry in one shared space
+(physical px or primary-scale logical) and converting only at the bridge —
+a behavior-bearing change to freshly landed code, punted after QA (M1)
+rather than rushed at the end of the pack. The current failure mode is
+safe: a silent no-op, never a wrong-position window.
+
+**Suggested approach when picked up**
+1. Keep `planMonitorCrossing` in physical pixels; move the logical↔physical
+   conversion into `bridge/roamer.ts` (it already knows each monitor's
+   `scaleFactor`).
+2. Add a mixed-DPI fixture to `roam.test.ts` (1× + 1.25 monitors, expect
+   adjacency + clamped y in physical space).
+3. Re-verify the 30s cache refresh converts window position through the
+   *current* monitor's scale after a crossing.
+
+---
+
 ## References
 
 - Codex review output (gitignored): `codex-uiux-out.txt`

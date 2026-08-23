@@ -286,6 +286,9 @@
    * the pre-REQ-120 behavior).
    */
   function tryRoamStep(now: number, mood: Mood): boolean {
+    // Never fight the user's OS drag: a walk/run derived mid-drag must not
+    // setPosition the window while the user is holding it (QA M2).
+    if (osDragging) return false;
     const result = roam.tryStep({
       now,
       mood,
