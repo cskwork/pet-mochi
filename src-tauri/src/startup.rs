@@ -12,9 +12,23 @@ pub(crate) fn resolve_pet_home() -> AppResult<(PathBuf, AutostartArgs)> {
     let home = custom_home
         .unwrap_or_else(|| default_pet_home().unwrap_or_else(|_| PathBuf::from("./pet_home")));
     ensure_pet_home(&home)?;
-    let home = home.canonicalize()?;
+    let home = simplify_verbatim(home.canonicalize()?);
     let args = autostart_args_for_home(&home, custom)?;
     Ok((home, AutostartArgs(args)))
+}
+
+/// Windows `canonicalize` returns verbatim paths (`\\?\C:\…`,
+/// `\\?\UNC\server\…`). Strip the prefix so the home is shown and passed
+/// to autostart the way users write it; other paths are returned unchanged.
+fn simplify_verbatim(path: PathBuf) -> PathBuf {
+    let Some(s) = path.to_str() else { return path };
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    if let Some(rest) = s.strip_prefix(r"\\?\") {
+        return PathBuf::from(rest);
+    }
+    path
 }
 
 /// `None` selects the default home; an explicit flag must never silently fall back.
@@ -329,5 +343,18 @@ mod tests {
         )
         .is_err());
         assert!(validate_autostart_launch(AutostartTarget::Linux, Some("/My Apps/Mochi.AppImage"), &[]).is_err());
+    }
+
+    #[test]
+    fn verbatim_windows_paths_are_simplified_and_then_accepted() {
+        let plain = simplify_verbatim(PathBuf::from(r"\\?\C:\Users\Me\Mochi"));
+        assert_eq!(plain, PathBuf::from(r"C:\Users\Me\Mochi"));
+        let unc = simplify_verbatim(PathBuf::from(r"\\?\UNC\server\share\Mochi"));
+        assert_eq!(unc, PathBuf::from(r"\\server\share\Mochi"));
+        assert_eq!(simplify_verbatim(PathBuf::from("/home/me/mochi")), PathBuf::from("/home/me/mochi"));
+        for home in [plain, unc] {
+            let args = autostart_args_for_home(&home, true).unwrap();
+            validate_autostart_launch(AutostartTarget::Windows, None, &args).unwrap();
+        }
     }
 }
