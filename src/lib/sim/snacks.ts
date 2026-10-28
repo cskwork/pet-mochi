@@ -1,6 +1,6 @@
 import { deriveMood } from "./mood";
 import { clamp, type MovementState, type PetState } from "./state";
-import type { AnimationStep } from "./actions";
+import { applyCareBond, type AnimationStep } from "./actions";
 
 /**
  * Snack picker + favorite-snack discovery (PRD §27.5, REQ-107).
@@ -67,14 +67,15 @@ export function applySnackFeed(
   snack: SnackKey,
   alreadyDiscovered: boolean,
 ): SnackFeedResult {
-  const nowIso = new Date().toISOString();
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
   const favorite = favoriteSnackFor(state.id, state.createdAt);
   const isFavorite = snack === favorite;
   const favoriteDiscovered = isFavorite && !alreadyDiscovered;
   const steps = isFavorite ? favoriteFeedSteps(snack) : plainFeedSteps(snack);
 
   const next: PetState = {
-    ...state,
+    ...applyCareBond(state, nowMs),
     hunger: clamp(state.hunger - 35),
     affection: clamp(state.affection + (isFavorite ? 5 : 3)),
     stress: clamp(state.stress - 4),

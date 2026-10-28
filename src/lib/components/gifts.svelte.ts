@@ -41,6 +41,9 @@ export type GiftEffects = {
   playSteps: (steps: AnimationStep[]) => void;
   spawnBurst: (kind: ParticleKind) => void;
   flashBubble: (text: string, ms?: number) => void;
+  /** Live action deadline; celebrations that resolve after an await skip
+   *  their pose sequence while a user action is still playing. */
+  actionPlayingUntil?: () => number;
 };
 
 /** Reads the live animation deadline at evaluation time (it can move while a
@@ -143,7 +146,11 @@ export function createGifts(effects: GiftEffects) {
             confidence: 1,
           })
           .catch(() => undefined);
-        effects.playSteps(CHOREOGRAPHY_CATALOG.delight_burst.variants[0]);
+        // Re-check after the await — don't stomp an action the user started
+        // while the memory write was in flight (same rule as keepsakes).
+        if (Date.now() >= (effects.actionPlayingUntil?.() ?? 0)) {
+          effects.playSteps(CHOREOGRAPHY_CATALOG.delight_burst.variants[0]);
+        }
         effects.spawnBurst("confetti");
         playSfx("chime");
         effects.flashBubble(hatchdayBubble(pet.name, status.ageYears), 6_000);

@@ -41,6 +41,33 @@ export type ActionResult = {
 type Rng = () => number;
 const defaultRng: Rng = Math.random;
 
+/** Trust gained per care action (pat/feed/play/snack). Trust starts at 50 and
+ *  keepsakes need ≥ 55, so five caring taps unlock the gift gate. */
+export const CARE_TRUST_GAIN = 1;
+/** Bond (relationshipLevel, shown as ♥N) gained per care *visit*. */
+export const CARE_BOND_GAIN = 0.5;
+/** A care action counts as a new visit only when the previous interaction was
+ *  at least this long ago, so tap-spamming can't farm the bond. */
+export const CARE_BOND_VISIT_GAP_MS = 10 * 60_000;
+
+/**
+ * Small, bounded bond growth from a care action. Trust +1 per action; the
+ * bond +0.5 per visit (≥ 10 min since the last interaction). Decay sheds the
+ * bond at 2/day only while nobody has interacted for 30+ minutes, so about six
+ * visits a day nets roughly +1.5–3 ♥ per day — ♥1 becomes ♥4–5 within a few
+ * days of normal care, while a neglected pet still drifts back down. Pure:
+ * `nowMs` is injected; reads the PRE-action `lastInteractionAt`.
+ */
+export function applyCareBond(state: PetState, nowMs: number): PetState {
+  const last = state.lastInteractionAt ? Date.parse(state.lastInteractionAt) : NaN;
+  const newVisit = Number.isNaN(last) || nowMs - last >= CARE_BOND_VISIT_GAP_MS;
+  return {
+    ...state,
+    trust: clamp(state.trust + CARE_TRUST_GAIN),
+    relationshipLevel: clamp(state.relationshipLevel + (newVisit ? CARE_BOND_GAIN : 0)),
+  };
+}
+
 /**
  * Apply a tamagotchi-style interaction. Pure: returns a brand-new PetState
  * along with an animation sequence. Each action plays a multi-frame sequence
@@ -54,14 +81,17 @@ export function applyAction(
   key: ActionKey,
   rng: Rng = defaultRng,
 ): ActionResult {
-  const nowIso = new Date().toISOString();
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
   const def = ACTION_DEFINITIONS[key];
+  // Pat / feed / play are care; Rest is not (it's a nap, not attention).
+  const cared = key === "rest" ? state : applyCareBond(state, nowMs);
 
   switch (key) {
     case "feed": {
       const steps = feedSteps();
       const next: PetState = {
-        ...state,
+        ...cared,
         hunger:    clamp(state.hunger    - 35),
         affection: clamp(state.affection + 3),
         stress:    clamp(state.stress    - 4),
@@ -77,7 +107,7 @@ export function applyAction(
     case "play": {
       const steps = playSteps(rng);
       const next: PetState = {
-        ...state,
+        ...cared,
         boredom:   clamp(state.boredom   - 30),
         energy:    clamp(state.energy    - 8),
         affection: clamp(state.affection + 4),
@@ -109,7 +139,7 @@ export function applyAction(
     case "pet": {
       const steps = petSteps(state.currentAnimation);
       const next: PetState = {
-        ...state,
+        ...cared,
         affection: clamp(state.affection + 1),
         boredom:   clamp(state.boredom   - 4),
         stress:    clamp(state.stress    - 2),

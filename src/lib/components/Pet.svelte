@@ -6,7 +6,7 @@
   import PetActions from "./PetActions.svelte";
   import PetStatus from "./PetStatus.svelte";
   import {
-    computeAwayMinutes,
+    clamp,
     deriveTimeOfDay,
     nextWanderPosition,
     findSafeStartPosition,
@@ -34,6 +34,13 @@
     resolveStageTheme,
     GRAB_ANIMATION,
     LANDING_STABLE_SAMPLES,
+    landingStress,
+    newPresence,
+    notePresenceActivity,
+    userJustReturned as isJustReturned,
+    minutesSinceActivity,
+    type PresenceState,
+    type Ritual,
     type ActionKey,
     type AnimationStep,
     type ChoreographyPick,
@@ -98,7 +105,9 @@
   let positionInitialised = false;
   let facing = $state<"left" | "right">("right");
   let recentPositive = $state(false);
-  let lastInteractionAt = $state<number>(Date.now());
+  // Presence = real desktop activity (global cursor movement or any pet
+  // interaction), not pet clicks — see sim/presence.ts.
+  let presence: PresenceState = newPresence(Date.now());
   let lastTickAt = $state<number>(Date.now());
   let nudgeState: NudgeState = newNudgeState();
   let saving = $state(false);
@@ -127,9 +136,16 @@
   const snack = createSnackTray();
   // REQ-109 keepsakes / REQ-110 hatch-day — runtime flags live in
   // gifts.svelte.ts (REQ-124.2). Celebrations drive Pet-owned channels.
-  const gifts = createGifts({ playSteps, spawnBurst, flashBubble });
-  // REQ-111 time-of-day rituals.
+  const gifts = createGifts({
+    playSteps,
+    spawnBurst,
+    flashBubble,
+    actionPlayingUntil: () => actionPlayingUntil,
+  });
+  // REQ-111 time-of-day rituals. A ritual that lands while a user action is
+  // playing waits here until the action ends instead of being dropped.
   let lastPeriod: Period | null = null;
+  let pendingRitual: Ritual | null = null;
   // REQ-102 idle-triggered status report. `idleSince === 0` means "not idle".
   let idleSince = 0;
   let reportGateInFlight = false;
@@ -148,14 +164,15 @@
       cachedScaleFactor = sf;
     },
     onCrossingLanded: (petPos) => {
-      position = petPos;
+      movePet(petPos, false);
+      invalidateWinPos();
       // A short beat from the existing walk pose so the re-entry reads as
       // continuing motion (no new sprites).
       playSteps([{ animation: "walk", durationMs: 600 }]);
     },
   });
   // REQ-113 animation intensity (0–1.5), live-updated via settings:changed.
-  let animationIntensity = 1;
+  let animationIntensity = $state(1);
   // REQ-122 — opt-in critical-need desktop notifications: gate runtime lives
   // in notify.svelte.ts (REQ-124.2).
   const notify = createNotify();
@@ -166,7 +183,7 @@
   let tickTimer: ReturnType<typeof setInterval> | undefined;
   let bubbleTimer: ReturnType<typeof setTimeout> | undefined;
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
-  let hitTestTimer: ReturnType<typeof setInterval> | undefined;
+  let hitTestTimer: ReturnType<typeof setTimeout> | undefined;
   let unlistenInbox: (() => void) | null = null;
   let unsubscribeBus: (() => void) | null = null;
   let lastAutonomousFor: LastAutonomous = null;
@@ -181,6 +198,23 @@
   let destroyed = false;
   let clickThroughOn = false;
   let cachedScaleFactor = 1;
+  // Click-through poll caches. The window position only changes on drag,
+  // roam/crossing moves, or resize, so it is cached (refreshed on those
+  // events, on tauri://move, and every WIN_POS_REFRESH_MS as a safety net)
+  // instead of being re-read over IPC on every poll.
+  let cachedWinPos: { x: number; y: number } | null = null;
+  let winPosFetchedAt = 0;
+  let hitTestInFlight = false;
+  // Previous global cursor sample — compared only to detect activity; never
+  // persisted or logged.
+  let lastGlobalCursor: { x: number; y: number } | null = null;
+  let unlistenMoved: (() => void) | null = null;
+  // Live DOM nodes for hit-testing (rects follow CSS transitions).
+  let petEl = $state<HTMLButtonElement | null>(null);
+  let bubbleEl = $state<HTMLDivElement | null>(null);
+  let consentEl = $state<HTMLDivElement | null>(null);
+  // Smooth walking: CSS translate transition length for the last move.
+  let moveMs = $state(0);
 
   // Drag/click separation state — startDragging fires only after the pointer
   // moves beyond DRAG_THRESHOLD; otherwise the click handler runs normally.
@@ -194,7 +228,16 @@
   // is silent/lightweight; the backend still enforces the canonical 90s
   // shared LLM cooldown (REQ-097).
   const CHOREO_LOCAL_COOLDOWN_MS = 30_000;
-  const HIT_TEST_MS = 80;
+  const HIT_TEST_NEAR_MS = 80;
+  // Back-off cadence while the cursor is well away from the overlay.
+  const HIT_TEST_FAR_MS = 400;
+  // Logical px around the window that still counts as "near" — generous so
+  // the faster cadence is active before the cursor reaches the pet.
+  const HIT_TEST_NEAR_MARGIN = 200;
+  const WIN_POS_REFRESH_MS = 2_000;
+  // Glide length for a wander step; just under the 3s tick so consecutive
+  // walk ticks read as continuous motion.
+  const WALK_GLIDE_MS = 2_800;
   const HIT_PAD = 8;
   const DRAG_THRESHOLD = 6;
   // Stable estimate for bubble dimensions — placement is recomputed reactively
@@ -215,14 +258,42 @@
     const dx = cursor.x - (position.x + petSize / 2);
     const dy = cursor.y - (position.y + petSize / 2);
     const dist = Math.sqrt(dx * dx + dy * dy);
-    const minutesSince = (Date.now() - lastInteractionAt) / 60_000;
+    const now = Date.now();
     return {
       cursorNearPet: dist < 120,
-      userJustReturned: minutesSince > 30,
+      userJustReturned: isJustReturned(presence, now),
       recentPositiveEvent: recentPositive,
-      awayMinutes: minutesSince,
+      awayMinutes: minutesSinceActivity(presence, now),
       timeOfDay: deriveTimeOfDay(),
     };
+  }
+
+  /** Record real user activity. Fires USER_RETURNED exactly once on the
+   *  away→active edge, carrying the real away duration (REQ-108 tiers). */
+  function markActivity() {
+    const r = notePresenceActivity(presence, Date.now());
+    presence = r.state;
+    if (r.returnedAfterMinutes !== null) {
+      eventBus.dispatch(
+        { type: "USER_RETURNED", awayMinutes: r.returnedAfterMinutes },
+        pet,
+      );
+    }
+  }
+
+  /** Single path for every pet-position change. `smooth` glides (wander
+   *  steps); everything else jumps. No glide while dragging, under reduced
+   *  motion, or at animation intensity 0. */
+  function movePet(next: { x: number; y: number }, smooth: boolean) {
+    moveMs =
+      smooth && !reducedMotion && animationIntensity > 0 && !osDragging
+        ? WALK_GLIDE_MS
+        : 0;
+    position = next;
+  }
+
+  function invalidateWinPos() {
+    winPosFetchedAt = 0;
   }
 
   async function syncFromBackend() {
@@ -230,12 +301,12 @@
     try {
       const remote = await api.getPetState();
       pet = remote;
-      // Restore the last interaction wall-clock so userJustReturned / awayMinutes
-      // are accurate immediately after restart instead of waiting 30 minutes.
-      const now = Date.now();
-      const minsAway = computeAwayMinutes(remote.lastInteractionAt, now);
-      if (minsAway !== null) {
-        lastInteractionAt = now - minsAway * 60_000;
+      // Seed presence from the last time the app was running (updatedAt is
+      // stamped every tick). A quick restart reads as present; launching
+      // after a long shutdown greets on the first real activity.
+      const lastRun = Date.parse(remote.updatedAt);
+      if (!Number.isNaN(lastRun) && lastRun < Date.now()) {
+        presence = newPresence(lastRun);
       }
     } catch (err) {
       console.warn("getPetState failed", err);
@@ -275,8 +346,6 @@
     }, SAVE_DEBOUNCE_MS);
   }
 
-  let wasReturning = false;
-
   /**
    * REQ-120/121 — one roam attempt for this tick, delegating the cache +
    * window-shift machinery to the roam composable. Returns true when the
@@ -298,12 +367,15 @@
     });
     if (result === null) return false;
     if (result.type === "crossing") {
+      invalidateWinPos();
       // Entering from the target's right edge → she walks in heading left.
       facing = result.entryEdge === "right" ? "left" : "right";
       return true;
     }
     facing = result.step.x < 0 ? "left" : result.step.x > 0 ? "right" : facing;
-    position = result.petPos;
+    // The window itself jumped by the step, so the pet jumps with it.
+    movePet(result.petPos, false);
+    invalidateWinPos();
     return true;
   }
 
@@ -322,7 +394,12 @@
     // Wander while walking/running. The status panel (when open) and the
     // actions panel are passed as obstacles so Mochi never visually disappears
     // behind UI chrome.
-    if (next.currentAnimation === "walk" || next.currentAnimation === "run") {
+    // Never move while a user action pins the pose or the OS drags the window.
+    if (
+      (next.currentAnimation === "walk" || next.currentAnimation === "run") &&
+      now >= actionPlayingUntil &&
+      !osDragging
+    ) {
       // REQ-120 — at a viewport edge the window follows the pet's un-clamped
       // step so she appears to walk across the desktop; when the work area or
       // a missing cache blocks that, the classic in-window wander runs
@@ -334,7 +411,7 @@
           currentObstacles(),
         );
         facing = newPos.x < position.x ? "left" : newPos.x > position.x ? "right" : facing;
-        position = newPos;
+        movePet(newPos, true);
       }
     }
 
@@ -352,7 +429,9 @@
     const nudge = nextNudge(pet, nudgeState, now);
     if (nudge) {
       flashBubble(`${pet.name}: ${nudge.bubble}`, 2_500);
-      if (nudge.animation && now >= actionPlayingUntil) {
+      // Never on a sleeping pet: an autonomous nudge pose would break the
+      // sleep hysteresis (only user actions wake her).
+      if (nudge.animation && now >= actionPlayingUntil && pet.currentAnimation !== "sleep") {
         // Override this tick's animation; the next tick re-derives from stats.
         // Suppressed mid-action so the eat/yawn beats finish cleanly.
         pet = { ...pet, currentAnimation: nudge.animation };
@@ -371,12 +450,18 @@
       // transition branch already runs on every period change, so no new
       // listener is needed for the live swap.
       if (currentStageBackground === "auto") applyStageBackground("auto", period);
-      if (ritual && now >= actionPlayingUntil) {
-        playSteps(ritual.steps);
-        if (ritual.bubble) flashBubble(`${pet.name}: ${ritual.bubble}`, 3_000);
-      }
+      // A newer transition supersedes any ritual still waiting.
+      pendingRitual = ritual;
     }
     lastPeriod = period;
+    // Play the ritual once no user action holds the pose (deferred, not
+    // dropped, when the period flips mid-action).
+    if (pendingRitual && now >= actionPlayingUntil) {
+      const ritual = pendingRitual;
+      pendingRitual = null;
+      playSteps(ritual.steps);
+      if (ritual.bubble) flashBubble(`${pet.name}: ${ritual.bubble}`, 3_000);
+    }
 
     // REQ-106 — idle micro-quirk. Skipped on nudge ticks so the nudge's own
     // animation cue isn't immediately overwritten, and skipped entirely while
@@ -444,20 +529,7 @@
     notify.evaluate(pet, now);
 
     eventBus.dispatch({ type: "IDLE_TICK" }, pet);
-
-    // Edge-trigger USER_RETURNED on the away→returning transition so
-    // subscribers (autonomous speech, future analytics) actually fire instead
-    // of the salience gate being dead code. We only dispatch on the *first*
-    // tick where userJustReturned becomes true.
-    if (ctx.userJustReturned && !wasReturning) {
-      wasReturning = true;
-      eventBus.dispatch(
-        { type: "USER_RETURNED", awayMinutes: ctx.awayMinutes },
-        pet,
-      );
-    } else if (!ctx.userJustReturned) {
-      wasReturning = false;
-    }
+    // USER_RETURNED is edge-triggered from markActivity() on real activity.
 
     scheduleSave();
 
@@ -556,7 +628,7 @@
   async function onSnackPick(key: SnackKey) {
     snack.close();
     flashBusy("feed");
-    lastInteractionAt = Date.now();
+    markActivity();
     recentPositive = true;
     const result = applySnackFeed(pet, key, snack.isFavoriteDiscovered());
     pet = result.state;
@@ -592,6 +664,9 @@
   function enqueueInboxFile(name: string) {
     if (!name) return;
     if (inboxQueue.includes(name)) return;
+    // Freeze the dialog where it opens so Read/Skip don't wander off with
+    // the pet; it stays put until the queue drains.
+    if (inboxQueue.length === 0) consentPos = computeConsentPlacement();
     inboxQueue = [...inboxQueue, name];
   }
 
@@ -599,6 +674,7 @@
     const idx = inboxQueue.indexOf(name);
     if (idx === -1) return;
     inboxQueue = [...inboxQueue.slice(0, idx), ...inboxQueue.slice(idx + 1)];
+    if (inboxQueue.length === 0) consentPos = null;
   }
 
   async function onInboxApprove(name: string): Promise<void> {
@@ -618,6 +694,7 @@
     // unapproved, which is the safe default per REQ-084.
     if (inboxQueue.length === 0) return;
     inboxQueue = inboxQueue.slice(1);
+    if (inboxQueue.length === 0) consentPos = null;
   }
 
   /**
@@ -666,6 +743,9 @@
       pick = pickFallbackPreset(pet, event);
     }
 
+    // The LLM await can outlive a tap: never clobber a user action that
+    // started meanwhile (its pose and bubble win).
+    if (destroyed || Date.now() < actionPlayingUntil) return;
     const steps = stepsForPick(pick);
     playSteps(steps);
     // The approval flow shows the file summary in the bubble — the motion
@@ -702,10 +782,11 @@
       if (reply && reply.text) {
         flashBubble(`${pet.name}: ${reply.text}`, 5_500);
       }
-      // Adopt backend pet state (lastLlmCallAt is set there) so the next
-      // debounced save doesn't roll back the LLM call timestamp.
+      // Merge only what this command owns (the LLM timestamp) so the next
+      // debounced save doesn't roll it back — adopting the whole reply would
+      // revert any feed/pat the user did while the call was in flight.
       if (reply && reply.pet) {
-        pet = reply.pet;
+        pet = { ...pet, lastLlmCallAt: reply.pet.lastLlmCallAt };
       }
     } catch {
       // Autonomous speech is best-effort; failure is silent.
@@ -788,7 +869,7 @@
     }
     snack.close();
     flashBusy(key);
-    lastInteractionAt = Date.now();
+    markActivity();
     recentPositive = true;
     const { state, bubble, eventType, salience, steps } = applyAction(pet, key);
     pet = state;
@@ -832,7 +913,9 @@
       // Surface the file path in the dev console so power users can find it
       // without us cluttering the bubble UI.
       console.info("[mochi] report saved →", report.savedPath);
-      pet = { ...pet, currentAnimation: "celebrate" };
+      if (Date.now() >= actionPlayingUntil) {
+        pet = { ...pet, currentAnimation: "celebrate" };
+      }
     } catch (err) {
       console.warn("generateInteractionReport failed", err);
       flashBubble(`${pet.name}: ✨ couldn't write right now`, 3_000);
@@ -843,6 +926,8 @@
 
   function onPointerMove(e: PointerEvent) {
     cursor = { x: e.clientX, y: e.clientY };
+    // Browser preview has no global poll; in-window movement is activity.
+    if (!api.hasBackend) markActivity();
   }
 
   function onResize() {
@@ -850,12 +935,14 @@
       width: window.innerWidth,
       height: window.innerHeight,
     };
+    invalidateWinPos();
   }
 
   function onPointerDown(e: PointerEvent) {
     if (e.button !== 0) return;
     dragStart = { x: e.clientX, y: e.clientY, pointerId: e.pointerId };
     dragged = false;
+    markActivity();
     pressed = true; // REQ-104 press squish
     (e.currentTarget as HTMLElement | null)?.setPointerCapture?.(e.pointerId);
   }
@@ -892,6 +979,7 @@
     // REQ-120 — the OS drag invalidates the cached window position; the next
     // walk tick re-reads it before any edge-walking shift.
     roam.invalidate();
+    moveMs = 0;
     playSteps([{ animation: GRAB_ANIMATION, durationMs: 15_000 }]);
     getCurrentWindow()
       .outerPosition()
@@ -909,7 +997,12 @@
       ? Math.hypot(winPos.x - dragStartWinPos.x, winPos.y - dragStartWinPos.y) / sf
       : 0;
     dragStartWinPos = null;
+    cachedWinPos = { x: winPos.x, y: winPos.y };
+    winPosFetchedAt = Date.now();
     playSteps(landingSteps(distance));
+    // A long fling ends dizzy — the one gentle stress source (sim/landing.ts).
+    const addStress = landingStress(distance);
+    if (addStress > 0) pet = { ...pet, stress: clamp(pet.stress + addStress) };
     triggerLandingPulse();
     // The drop may have landed on a different-DPI monitor; refresh the cached
     // scale factor in the background so hit-testing and the next landing use
@@ -1042,10 +1135,13 @@
   // no room (e.g., the pet is near the bottom of the viewport). Avoids the
   // status strip and actions panel obstacles, then clamps to the viewport.
   const CONSENT_W = 250;
+  // Placement estimate only; hit-testing measures the real dialog rect.
   const CONSENT_H = 140;
   const CONSENT_GAP = 10;
   const CONSENT_MARGIN = 8;
-  let consentPlacement = $derived.by(() => {
+  // Frozen placement while the dialog is open (set when the queue fills).
+  let consentPos = $state<{ left: number; top: number } | null>(null);
+  function computeConsentPlacement(): { left: number; top: number } {
     const status = statusBox();
     const actions = actionsBox();
     const topClear = Math.max(CONSENT_MARGIN, status.bottom + CONSENT_GAP);
@@ -1065,7 +1161,7 @@
       Math.min(viewportSize.width - CONSENT_W - CONSENT_MARGIN, left),
     );
     return { left, top };
-  });
+  }
 
   // Action panel sits bottom-right; estimate generously so the hit-test slop
   // forgives margin/padding/font drift without mis-classifying the cursor.
@@ -1132,9 +1228,12 @@
         position.y + petSize > o.top,
     );
     if (overlaps) {
-      position = findSafeStartPosition(
-        { width: viewportSize.width, height: viewportSize.height, petSize },
-        obs,
+      movePet(
+        findSafeStartPosition(
+          { width: viewportSize.width, height: viewportSize.height, petSize },
+          obs,
+        ),
+        false,
       );
     }
   }
@@ -1157,16 +1256,21 @@
     // dismiss scrim — every cursor position is interactive (clicking
     // anywhere closes the menu, clicking the menu item triggers it).
     if (menuOpen) return true;
-    if (
-      x >= position.x - HIT_PAD &&
-      x <= position.x + petSize + HIT_PAD &&
-      y >= position.y - HIT_PAD &&
-      y <= position.y + petSize + HIT_PAD
-    ) return true;
+    // Live rects: the pet and bubble glide via CSS transitions, so their
+    // on-screen box can lag the `position` target by up to a tick.
+    const petRect = petEl?.getBoundingClientRect() ?? {
+      left: position.x,
+      top: position.y,
+      right: position.x + petSize,
+      bottom: position.y + petSize,
+    };
+    if (isInsideRect(x, y, petRect)) return true;
     if (isInsideRect(x, y, actionsBox())) return true;
     if (isInsideRect(x, y, statusBox())) return true;
     if (snack.open && isInsideRect(x, y, snackTrayBox())) return true;
-    if (bubbleOpen) {
+    if (bubbleOpen && bubbleEl) {
+      if (isInsideRect(x, y, bubbleEl.getBoundingClientRect())) return true;
+    } else if (bubbleOpen) {
       // Bubble is positioned absolutely at bubblePlacement.{left,top}; size is
       // BUBBLE_W x BUBBLE_H. Hit-test that rect with HIT_PAD slop.
       const bx = bubblePlacement.left;
@@ -1178,17 +1282,11 @@
         y <= by + BUBBLE_H + HIT_PAD
       ) return true;
     }
-    if (inboxQueue.length > 0) {
+    if (inboxQueue.length > 0 && consentEl) {
       // Consent dialog is interactive — buttons must receive clicks even when
-      // the rest of the overlay is click-through.
-      const cx = consentPlacement.left;
-      const cy = consentPlacement.top;
-      if (
-        x >= cx - HIT_PAD &&
-        x <= cx + CONSENT_W + HIT_PAD &&
-        y >= cy - HIT_PAD &&
-        y <= cy + CONSENT_H + HIT_PAD
-      ) return true;
+      // the rest of the overlay is click-through. Measured, not estimated:
+      // long file names / error text make it taller than CONSENT_H.
+      if (isInsideRect(x, y, consentEl.getBoundingClientRect())) return true;
     }
     return false;
   }
@@ -1203,12 +1301,32 @@
     }
   }
 
-  async function hitTestTick() {
-    if (!api.hasBackend || destroyed) return;
+  /**
+   * One click-through poll. Returns true when the cursor is near the overlay
+   * (or a drag/menu needs fast sampling) so the scheduler keeps the fast
+   * cadence; false lets it back off.
+   */
+  async function hitTestTick(): Promise<boolean> {
+    if (!api.hasBackend || destroyed) return false;
+    // Never overlap: a slow IPC round-trip must not stack polls.
+    if (hitTestInFlight) return true;
+    hitTestInFlight = true;
     try {
       const cp = await cursorPosition();
-      const w = getCurrentWindow();
-      const wp = await w.outerPosition();
+      const now = Date.now();
+      // Presence: any global cursor movement is user activity.
+      if (lastGlobalCursor && (cp.x !== lastGlobalCursor.x || cp.y !== lastGlobalCursor.y)) {
+        markActivity();
+      }
+      lastGlobalCursor = { x: cp.x, y: cp.y };
+      // Landing detection needs a fresh position every sample while dragging;
+      // otherwise the cached position is good until invalidated or stale.
+      if (osDragging || !cachedWinPos || now - winPosFetchedAt >= WIN_POS_REFRESH_MS) {
+        const fresh = await getCurrentWindow().outerPosition();
+        cachedWinPos = { x: fresh.x, y: fresh.y };
+        winPosFetchedAt = now;
+      }
+      const wp = cachedWinPos;
       // REQ-112 — landing detection piggybacks on this existing poll: once the
       // window position holds still for LANDING_STABLE_SAMPLES consecutive
       // samples (after a short settle grace), the drag is considered dropped.
@@ -1227,17 +1345,33 @@
       const sf = cachedScaleFactor;
       const lx = (cp.x - wp.x) / sf;
       const ly = (cp.y - wp.y) / sf;
-      // Keep cursor state alive for facing direction even while click-through.
-      if (
-        lx >= 0 && ly >= 0 &&
-        lx <= viewportSize.width && ly <= viewportSize.height
-      ) {
-        cursor = { x: lx, y: ly };
-      }
+      // Window-local cursor even when outside the window: outside reads as
+      // far away, so cursorNearPet can't stick on after the pointer leaves.
+      cursor = { x: lx, y: ly };
       void applyClickThrough(!isInsideInteractive(lx, ly));
+      return (
+        osDragging ||
+        menuOpen ||
+        (lx >= -HIT_TEST_NEAR_MARGIN &&
+          ly >= -HIT_TEST_NEAR_MARGIN &&
+          lx <= viewportSize.width + HIT_TEST_NEAR_MARGIN &&
+          ly <= viewportSize.height + HIT_TEST_NEAR_MARGIN)
+      );
     } catch {
       // Tauri call failed (window closed, etc.); leave state untouched.
+      return false;
+    } finally {
+      hitTestInFlight = false;
     }
+  }
+
+  /** Self-scheduling poll: 80ms near the overlay, 400ms when far. */
+  async function runHitTestLoop() {
+    hitTestTimer = undefined;
+    if (destroyed) return;
+    const near = await hitTestTick();
+    if (destroyed) return;
+    hitTestTimer = setTimeout(runHitTestLoop, near ? HIT_TEST_NEAR_MS : HIT_TEST_FAR_MS);
   }
 
   onMount(async () => {
@@ -1250,9 +1384,12 @@
     // Place Mochi in a sensible visible spot once the viewport is known.
     // Default (0,0) would put her in the corner under the status chip.
     if (!positionInitialised) {
-      position = findSafeStartPosition(
-        { width: viewportSize.width, height: viewportSize.height, petSize },
-        currentObstacles(),
+      movePet(
+        findSafeStartPosition(
+          { width: viewportSize.width, height: viewportSize.height, petSize },
+          currentObstacles(),
+        ),
+        false,
       );
       positionInitialised = true;
     }
@@ -1352,12 +1489,21 @@
       } catch {
         cachedScaleFactor = 1;
       }
+      // Keep the cached window position current on every OS/programmatic
+      // move without polling outerPosition.
+      try {
+        unlistenMoved = await getCurrentWindow().onMoved(({ payload }) => {
+          cachedWinPos = { x: payload.x, y: payload.y };
+          winPosFetchedAt = Date.now();
+        });
+      } catch {
+        // The periodic refresh in hitTestTick still covers moves.
+      }
       void applyClickThrough(true);
       // Run once immediately so the cursor is correctly classified before the
-      // first 80ms tick — avoids a startup blind spot if the overlay mounts
-      // under the cursor.
-      void hitTestTick();
-      hitTestTimer = setInterval(hitTestTick, HIT_TEST_MS);
+      // first poll — avoids a startup blind spot if the overlay mounts under
+      // the cursor. The loop then reschedules itself (never overlapping).
+      void runHitTestLoop();
     }
 
     // Subscribe to the in-process bus so high-salience autonomous events
@@ -1368,7 +1514,9 @@
       if (event.type === "USER_RETURNED" && event.awayMinutes >= 30) {
         const greeting = greetingForReturn(event.awayMinutes);
         if (greeting) {
-          playSteps(greeting.steps);
+          // A user action already playing keeps its pose; the welcome still
+          // shows its bubble, burst, and chime.
+          if (Date.now() >= actionPlayingUntil) playSteps(greeting.steps);
           flashBubble(`${pet.name}: ${greeting.bubble}`, 4_000);
           if (greeting.burst) spawnBurst(greeting.burst);
           // The user just came back — a welcome counts as user-initiated.
@@ -1417,6 +1565,14 @@
       } catch (err) {
         console.warn("listen inbox failed", err);
       }
+      // The watcher's initial scan can fire before the listener above is
+      // registered; merge the current inbox once (deduped by name).
+      try {
+        const files = await api.listInboxFiles();
+        for (const f of files) enqueueInboxFile(f.name);
+      } catch (err) {
+        console.warn("listInboxFiles failed", err);
+      }
     }
 
     // REQ-101 — boot is a real event now: a wake-up beat plus APP_STARTED on
@@ -1437,7 +1593,8 @@
     if (saveTimer) clearTimeout(saveTimer);
     if (busyTimer) clearTimeout(busyTimer);
     if (flashStatTimer) clearTimeout(flashStatTimer);
-    if (hitTestTimer) clearInterval(hitTestTimer);
+    if (hitTestTimer) clearTimeout(hitTestTimer);
+    if (unlistenMoved) unlistenMoved();
     if (boingTimer) clearTimeout(boingTimer);
     if (landingTimer) clearTimeout(landingTimer);
     snack.dispose();
@@ -1465,7 +1622,8 @@
     class:pressed
     class:boing
     class:landing={landingPulse}
-    style="left: {position.x}px; top: {position.y}px; width: {petSize}px; height: {petSize}px;"
+    bind:this={petEl}
+    style="translate: {position.x}px {position.y}px; --move-ms: {moveMs}ms; width: {petSize}px; height: {petSize}px;"
     onpointerdown={onPointerDown}
     onpointermove={onPetPointerMove}
     onpointerup={onPetPointerUp}
@@ -1479,6 +1637,7 @@
       animation={pet.currentAnimation}
       size={petSize}
       facing={facing}
+      motion={animationIntensity > 0}
     />
   </button>
 
@@ -1523,18 +1682,20 @@
   {#if bubbleOpen && bubbleText}
     <div
       class="bubble-anchor"
-      style="left: {bubblePlacement.left}px; top: {bubblePlacement.top}px; --tail-x: {bubblePlacement.tailX}px;"
+      bind:this={bubbleEl}
+      style="translate: {bubblePlacement.left}px {bubblePlacement.top}px; --move-ms: {moveMs}ms; --tail-x: {bubblePlacement.tailX}px;"
       data-side={bubblePlacement.side}
     >
       <ChatBubble text={bubbleText} mood={pet.mood} side={bubblePlacement.side} />
     </div>
   {/if}
 
-  {#if inboxQueue.length > 0}
+  {#if inboxQueue.length > 0 && consentPos}
     {#key inboxQueue[0]}
       <div
         class="consent-anchor"
-        style="left: {consentPlacement.left}px; top: {consentPlacement.top}px; width: {CONSENT_W}px;"
+        bind:this={consentEl}
+        style="left: {consentPos.left}px; top: {consentPos.top}px; width: {CONSENT_W}px;"
       >
         <InboxConsent
           fileName={inboxQueue[0]}
@@ -1600,6 +1761,11 @@
   }
   .pet-anchor {
     position: absolute;
+    left: 0;
+    top: 0;
+    /* Smooth walking: position is the individual `translate` property (it
+       composes with the squash `transform` below), glided over --move-ms. */
+    transition: translate var(--move-ms, 0ms) linear;
     background: transparent;
     border: 0;
     padding: 0;
@@ -1614,7 +1780,9 @@
   /* REQ-104 — press squish + spring-back boing. Transform-only (GPU). */
   .pet-anchor.pressed {
     transform: scale(1.05, 0.92);
-    transition: transform 90ms ease;
+    transition:
+      transform 90ms ease,
+      translate var(--move-ms, 0ms) linear;
   }
   .pet-anchor.boing {
     animation: boing 320ms cubic-bezier(0.34, 1.56, 0.64, 1);
@@ -1734,6 +1902,10 @@
     letter-spacing: 0.02em;
   }
   @media (prefers-reduced-motion: reduce) {
+    .pet-anchor,
+    .bubble-anchor {
+      transition: none;
+    }
     .pet-anchor.pressed {
       transform: none;
       transition: none;
@@ -1750,6 +1922,9 @@
   }
   .bubble-anchor {
     position: absolute;
+    left: 0;
+    top: 0;
+    transition: translate var(--move-ms, 0ms) linear;
     width: 220px;
     pointer-events: auto;
   }

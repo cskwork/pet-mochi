@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import type { Mood, MovementState } from "../sim/state";
 
   type Props = {
@@ -9,6 +9,9 @@
     facing?: "left" | "right";
     blink?: boolean;
     breathe?: boolean;
+    /** False at animation intensity 0: stops every continuous CSS animation
+     *  (breathe, bobs, floating mood marks) — same set as reduced motion. */
+    motion?: boolean;
   };
 
   let {
@@ -21,6 +24,7 @@
     // from each frame's eye position. Kept in the prop API for compatibility.
     blink: _blink = false,
     breathe = true,
+    motion = true,
   }: Props = $props();
 
   type FrameSrc = string | [string, string];
@@ -72,6 +76,28 @@
     lonely: "hue-rotate(40deg) saturate(0.78) brightness(0.95)",
   };
 
+  // Preload + decode every pose once so the first swap to a new `src` doesn't
+  // hitch on a network fetch / image decode. Best-effort: a missing PNG just
+  // fails here and the <img> onerror → idle fallback still handles it.
+  // Held for the component's lifetime so the decoded bitmaps stay cached.
+  let preloaded: HTMLImageElement[] = [];
+  onMount(() => {
+    const urls = new Set<string>();
+    for (const src of Object.values(SRC)) {
+      if (Array.isArray(src)) src.forEach((u) => urls.add(u));
+      else urls.add(src);
+    }
+    for (const url of urls) {
+      const img = new Image();
+      img.src = url;
+      img.decode?.().catch(() => undefined);
+      preloaded.push(img);
+    }
+    return () => {
+      preloaded = [];
+    };
+  });
+
   let frameIdx = $state(0);
   let cycleTimer: ReturnType<typeof setInterval> | undefined;
 
@@ -111,6 +137,7 @@
   class="mochi"
   style="--size: {size}px; --scale-x: {scaleX}; --mood-filter: {moodFilter};"
   class:breathe
+  class:still={!motion}
   class:asleep={isAsleep}
   data-anim={animation}
 >
@@ -532,6 +559,12 @@
       transform: translateY(-6px);
       opacity: 1;
     }
+  }
+
+  /* Animation intensity 0 (REQ-113): no continuous motion at all. */
+  .mochi.still .sprite,
+  .mochi.still .mark {
+    animation: none !important;
   }
 
   @media (prefers-reduced-motion: reduce) {

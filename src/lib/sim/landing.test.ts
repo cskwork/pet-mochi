@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BIG_DROP_PX, GRAB_ANIMATION, landingSteps } from "./landing";
+import { BIG_DROP_PX, BIG_DROP_STRESS, GRAB_ANIMATION, landingSteps, landingStress } from "./landing";
 
 describe("REQ-112 drag landing", () => {
   it("the grab pose is the surprise sprite", () => {
@@ -25,5 +25,13 @@ describe("REQ-112 drag landing", () => {
         expect(s.durationMs).toBeGreaterThan(0);
       }
     }
+  });
+});
+
+describe("landing stress (the gentle stress source)", () => {
+  it("only big dizzy drops add stress, and only a little", () => {
+    expect(landingStress(BIG_DROP_PX - 1)).toBe(0);
+    expect(landingStress(BIG_DROP_PX)).toBe(BIG_DROP_STRESS);
+    expect(BIG_DROP_STRESS).toBeLessThanOrEqual(10);
   });
 });

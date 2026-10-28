@@ -34,3 +34,14 @@ export function landingSteps(distancePx: number): AnimationStep[] {
   }
   return [{ animation: "idle", durationMs: 250 }];
 }
+
+/** Stress added by a big (dizzy) drop. The one gentle stress source: a long
+ *  fling has a visible narrative (dizzy → shake), each one decays in ~3 min
+ *  (−0.03/s), so only repeated rough handling can reach the critical_stress
+ *  level — never ordinary absence or work. */
+export const BIG_DROP_STRESS = 6;
+
+/** Stress delta for a landing after a drag of `distancePx` (logical px). */
+export function landingStress(distancePx: number): number {
+  return distancePx >= BIG_DROP_PX ? BIG_DROP_STRESS : 0;
+}

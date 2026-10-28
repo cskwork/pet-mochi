@@ -104,3 +104,18 @@ describe("REQ-110 celebration copy", () => {
     expect(hatchdayBubble("Mochi", 1)).toContain("Mochi");
   });
 });
+
+describe("hasCelebratedHatchdayThisYear uses local time", () => {
+  it("counts a memory by its LOCAL year, not the UTC string prefix", () => {
+    // A celebration written at local 2026-01-01 00:30 — its UTC string may
+    // start with 2025 in UTC+ zones (or vice versa for Dec 31 in UTC- zones).
+    const localNewYear = new Date(2026, 0, 1, 0, 30, 0);
+    const mem = [{
+      type: HATCHDAY_MEMORY_TYPE,
+      content: `${HATCHDAY_MEMORY_MARKER}! 1 year together 🎉`,
+      createdAt: localNewYear.toISOString(),
+    }];
+    expect(hasCelebratedHatchdayThisYear(mem, new Date(2026, 5, 1))).toBe(true);
+    expect(hasCelebratedHatchdayThisYear(mem, new Date(2025, 5, 1))).toBe(false);
+  });
+});

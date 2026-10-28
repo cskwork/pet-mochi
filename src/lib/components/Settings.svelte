@@ -55,13 +55,34 @@
     }
   }
 
+  /** Refresh only the read-only lists. The focus handler uses this so a
+   *  window re-focus never overwrites unsaved edits in `settings`. */
+  async function refreshLists() {
+    if (!api.hasBackend) return;
+    try {
+      const [m, ix, ev, rr] = await Promise.all([
+        api.listMemories(200),
+        api.listInboxFiles(),
+        api.getEventLog(50),
+        api.listStatusReports(10),
+      ]);
+      memories = m;
+      inbox = ix;
+      events = ev;
+      recentReports = rr;
+    } catch (e) {
+      loadError = (e as Error)?.message ?? String(e);
+    }
+  }
+
   onMount(() => {
     document.body.classList.add("settings-page");
     void load();
     // REQ-115 — the window is hidden-on-close and re-shown by the pet's
     // context menu, so this component mounts once at app start. Refresh on
-    // focus so memories/keepsakes/reports reflect what happened since.
-    const onFocus = () => void load();
+    // focus so memories/keepsakes/reports reflect what happened since. The
+    // edited settings object is left alone (full load only if it never loaded).
+    const onFocus = () => void (settings === null ? load() : refreshLists());
     window.addEventListener("focus", onFocus);
     // Returned cleanup runs on component destroy in Svelte 5; without it the
     // settings background style leaks back onto the pet view in SPA navigation.

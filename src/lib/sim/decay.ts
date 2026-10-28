@@ -12,8 +12,11 @@ export function applyDecay(state: PetState, elapsedSeconds: number): PetState {
   // drift noticeably within a minute or two so the user actually sees the
   // pet's needs change, not have to wait 25 minutes for one bar to move.
   const dHunger = 0.10 * elapsedSeconds;
-  const dEnergy = state.currentAnimation === "sleep" ? +0.5 * elapsedSeconds : -0.08 * elapsedSeconds;
-  const dBoredom = 0.10 * elapsedSeconds;
+  const asleep = state.currentAnimation === "sleep";
+  const dEnergy = asleep ? +0.5 * elapsedSeconds : -0.08 * elapsedSeconds;
+  // Boredom is frozen while asleep — otherwise it climbs past the night-sleep
+  // gate (boredom < 60) and breaks her sleep from the inside.
+  const dBoredom = asleep ? 0 : 0.10 * elapsedSeconds;
   // Curiosity drifts toward a low baseline so the "?" mark eventually clears
   // when nothing novel happens. Above 60 it gently fades; below it slowly
   // builds back up — without this, curiosity ratchets upward forever and

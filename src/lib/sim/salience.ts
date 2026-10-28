@@ -96,7 +96,20 @@ export function _resetCooldowns(): void {
 }
 
 const DEFAULT_AUTO_LLM_COOLDOWN = 90_000;
-const SALIENCE_THRESHOLD = 70;
+export const SALIENCE_THRESHOLD = 70;
+
+/** Salience score (0..~170) for an event. Pure — never touches a cooldown. */
+export function salienceScore(event: PetEvent, state: PetState): number {
+  return eventImportance(event) + moodUrgency(state) + relationshipWeight(state);
+}
+
+/** Score-only half of {@link shouldCallLLM}: true when the event clears the
+ *  salience threshold (direct messages always do). Does NOT consume the
+ *  shared LLM cooldown, so logging/analytics can call it freely. */
+export function isSalient(event: PetEvent, state: PetState): boolean {
+  if (event.type === "USER_SENT_MESSAGE") return true;
+  return salienceScore(event, state) >= SALIENCE_THRESHOLD;
+}
 
 /**
  * Decide whether an event is salient enough to trigger an autonomous LLM call.
@@ -104,10 +117,8 @@ const SALIENCE_THRESHOLD = 70;
  */
 export function shouldCallLLM(event: PetEvent, state: PetState): boolean {
   if (event.type === "USER_SENT_MESSAGE") return true;
-  const score =
-    eventImportance(event) + moodUrgency(state) + relationshipWeight(state);
   return (
-    score >= SALIENCE_THRESHOLD &&
+    isSalient(event, state) &&
     defaultCooldowns.pass("llm_autonomous", DEFAULT_AUTO_LLM_COOLDOWN)
   );
 }

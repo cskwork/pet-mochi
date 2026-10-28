@@ -88,6 +88,20 @@ export function sfxNotes(kind: SfxKind): SfxNote[] {
 
 let enabled = true;
 let ctx: AudioContext | null = null;
+let idleTimer: ReturnType<typeof setTimeout> | undefined;
+
+/** Suspend the AudioContext after this much silence so the audio thread
+ *  doesn't keep running for a pet that chirps a few times an hour. The next
+ *  playSfx resumes it. */
+export const SFX_IDLE_SUSPEND_MS = 30_000;
+
+function scheduleIdleSuspend(): void {
+  if (idleTimer) clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => {
+    idleTimer = undefined;
+    if (ctx && ctx.state === "running") void ctx.suspend().catch(() => undefined);
+  }, SFX_IDLE_SUSPEND_MS);
+}
 
 /** Settings gate (REQ-117); also flipped live on `settings:changed`. */
 export function setSfxEnabled(on: boolean): void {
@@ -130,6 +144,7 @@ export function playSfx(kind: SfxKind): void {
       osc.start(start);
       osc.stop(end + 0.02);
     }
+    scheduleIdleSuspend();
   } catch {
     // Audio failures are cosmetic; never surface them.
   }
@@ -137,6 +152,10 @@ export function playSfx(kind: SfxKind): void {
 
 /** Release the audio context (component teardown). */
 export function disposeSfx(): void {
+  if (idleTimer) {
+    clearTimeout(idleTimer);
+    idleTimer = undefined;
+  }
   if (ctx) {
     void ctx.close().catch(() => undefined);
     ctx = null;

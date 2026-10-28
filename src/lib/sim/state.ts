@@ -62,7 +62,7 @@ export type PetState = {
   currentAnimation: MovementState;
   currentIntent: Intent;
   lastInteractionAt: string | null;
-  lastLLMCallAt: string | null;
+  lastLlmCallAt: string | null;
   /** RFC3339 timestamp of the last idle-triggered status report (PRD §9.8).
    *  Drives the 12-hour cadence gate; null until the first report runs. */
   lastReportAt: string | null;
@@ -151,7 +151,7 @@ export function newPetState(name = "Mochi"): PetState {
     currentAnimation: "idle",
     currentIntent: "idle",
     lastInteractionAt: null,
-    lastLLMCallAt: null,
+    lastLlmCallAt: null,
     lastReportAt: null,
     createdAt: now,
     updatedAt: now,

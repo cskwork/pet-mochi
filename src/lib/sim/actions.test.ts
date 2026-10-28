@@ -4,6 +4,10 @@ import {
   ACTION_KEYS,
   ACTION_DEFINITIONS,
   applyAction,
+  applyCareBond,
+  CARE_BOND_GAIN,
+  CARE_BOND_VISIT_GAP_MS,
+  CARE_TRUST_GAIN,
   type ActionKey,
 } from "./actions";
 
@@ -250,5 +254,52 @@ describe("applyAction immutability and metadata", () => {
       expect(steps.length).toBeGreaterThan(0);
       expect(steps[steps.length - 1].animation).toBe(state.currentAnimation);
     }
+  });
+});
+
+describe("care bond (trust + relationshipLevel)", () => {
+  const longAgo = new Date(Date.now() - 60 * 60_000).toISOString();
+
+  it("pat / feed / play each add +1 trust; rest does not", () => {
+    for (const k of ["pet", "feed", "play"] as const) {
+      const { state } = applyAction({ ...newPetState(), trust: 50 }, k, fixedRng(0));
+      expect(state.trust, k).toBe(50 + CARE_TRUST_GAIN);
+    }
+    const { state } = applyAction({ ...newPetState(), trust: 50 }, "rest");
+    expect(state.trust).toBe(50);
+  });
+
+  it("five care actions unlock the keepsake trust gate (55)", () => {
+    let s = { ...newPetState(), trust: 50 };
+    for (let i = 0; i < 5; i++) s = applyAction(s, "pet").state;
+    expect(s.trust).toBeGreaterThanOrEqual(55);
+  });
+
+  it("trust is clamped at 100", () => {
+    const { state } = applyAction({ ...newPetState(), trust: 100 }, "pet");
+    expect(state.trust).toBe(100);
+  });
+
+  it("the bond grows once per visit, not per tap", () => {
+    const first = applyAction(
+      { ...newPetState(), relationshipLevel: 1, lastInteractionAt: longAgo },
+      "pet",
+    ).state;
+    expect(first.relationshipLevel).toBe(1 + CARE_BOND_GAIN);
+    // Second tap in the same visit (lastInteractionAt = just now) adds nothing.
+    const second = applyAction(first, "pet").state;
+    expect(second.relationshipLevel).toBe(first.relationshipLevel);
+  });
+
+  it("a first-ever interaction counts as a visit", () => {
+    const { state } = applyAction({ ...newPetState(), relationshipLevel: 1 }, "play", fixedRng(0));
+    expect(state.relationshipLevel).toBe(1 + CARE_BOND_GAIN);
+  });
+
+  it("applyCareBond is pure on the injected clock", () => {
+    const s = { ...newPetState(), lastInteractionAt: "2026-01-01T00:00:00.000Z", relationshipLevel: 3 };
+    const t0 = Date.parse("2026-01-01T00:00:00.000Z");
+    expect(applyCareBond(s, t0 + CARE_BOND_VISIT_GAP_MS - 1).relationshipLevel).toBe(3);
+    expect(applyCareBond(s, t0 + CARE_BOND_VISIT_GAP_MS).relationshipLevel).toBe(3.5);
   });
 });

@@ -4,6 +4,14 @@ import { chooseMovement } from "./movement";
 import type { PetState, RuntimeContext } from "./state";
 
 /**
+ * Upper bound on the seconds a single tick may apply. After OS sleep the first
+ * tick would otherwise apply the whole gap at once (8h → hunger 100, energy 0)
+ * while an app restart applies none; capping keeps both paths consistent with
+ * the "never guilt, always joy" welcome-back design.
+ */
+export const MAX_TICK_ELAPSED_SECONDS = 60;
+
+/**
  * Run one simulation tick: decay stats, derive mood, pick a new animation.
  * Pure — returns a new state.
  */
@@ -12,7 +20,7 @@ export function runTick(
   ctx: RuntimeContext,
   elapsedSeconds: number,
 ): PetState {
-  const decayed = applyDecay(state, elapsedSeconds);
+  const decayed = applyDecay(state, Math.min(elapsedSeconds, MAX_TICK_ELAPSED_SECONDS));
   const mood = deriveMood(decayed);
   const movement = chooseMovement({ ...decayed, mood }, ctx);
   return {

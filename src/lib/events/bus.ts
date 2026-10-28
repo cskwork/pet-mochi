@@ -1,10 +1,5 @@
 import type { PetEvent, PetState } from "../sim";
-import {
-  eventImportance,
-  moodUrgency,
-  relationshipWeight,
-  shouldCallLLM,
-} from "../sim";
+import { isSalient, salienceScore } from "../sim";
 import { api } from "../bridge/api";
 
 type Handler = (event: PetEvent, state: PetState) => void;
@@ -29,13 +24,12 @@ class EventBus {
         console.warn("event handler error", e);
       }
     }
-    if (api.hasBackend && shouldCallLLM(event, state)) {
-      const score =
-        eventImportance(event) +
-        moodUrgency(state) +
-        relationshipWeight(state);
+    // Log salient events. Score-only: calling shouldCallLLM here would
+    // consume the shared LLM cooldown a second time (the handler already
+    // did), which also made this log branch almost never run.
+    if (api.hasBackend && isSalient(event, state)) {
       void api
-        .logEvent(event.type, JSON.stringify(event), score)
+        .logEvent(event.type, JSON.stringify(event), salienceScore(event, state))
         .catch(() => undefined);
     }
   }

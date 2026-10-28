@@ -41,13 +41,16 @@ export function hasCelebratedHatchdayThisYear(
   memories: readonly { type: string; content: string; createdAt: string }[],
   now: Date,
 ): boolean {
-  const year = String(now.getFullYear());
-  return memories.some(
-    (m) =>
-      m.type === HATCHDAY_MEMORY_TYPE &&
-      m.content.includes(HATCHDAY_MEMORY_MARKER) &&
-      m.createdAt.startsWith(year),
-  );
+  // Compare in local time: createdAt is a UTC RFC3339 string, so a
+  // celebration written late on Dec 31 local (already Jan 1 UTC) or early on
+  // Jan 1 local (still Dec 31 UTC) must count for the local year.
+  const year = now.getFullYear();
+  return memories.some((m) => {
+    if (m.type !== HATCHDAY_MEMORY_TYPE) return false;
+    if (!m.content.includes(HATCHDAY_MEMORY_MARKER)) return false;
+    const created = new Date(m.createdAt);
+    return !Number.isNaN(created.getTime()) && created.getFullYear() === year;
+  });
 }
 
 export function hatchdayMemoryContent(ageYears: number): string {

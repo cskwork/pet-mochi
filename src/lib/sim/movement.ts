@@ -6,6 +6,11 @@ export type Rng = () => number;
 
 const defaultRng: Rng = Math.random;
 
+/** Sleep hysteresis: once asleep, Mochi keeps sleeping until energy climbs
+ *  back to this level. Without it the 3s tick woke her the moment sleep's own
+ *  recovery nudged energy past the entry threshold (~1 tick naps). */
+export const WAKE_ENERGY = 60;
+
 function pick<T>(arr: T[], rng: Rng): T {
   return arr[Math.floor(rng() * arr.length)];
 }
@@ -19,6 +24,10 @@ export function chooseMovement(
   ctx: RuntimeContext,
   rng: Rng = defaultRng,
 ): MovementState {
+  // Already asleep (tick-chosen, the Rest action, or the night ritual) →
+  // stay asleep until rested. User actions wake her by replacing
+  // currentAnimation with their own sequence before the next tick.
+  if (state.currentAnimation === "sleep" && state.energy < WAKE_ENERGY) return "sleep";
   if (state.energy < 15) return "sleep";
   if (ctx.userJustReturned) return "run";
   if (ctx.cursorNearPet) return "look_cursor";

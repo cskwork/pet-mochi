@@ -165,3 +165,10 @@ describe("REQ-107 discovery restore from persisted memories", () => {
     expect(isFavoriteDiscoveredInMemories([])).toBe(false);
   });
 });
+
+describe("snack feed builds trust", () => {
+  it("adds +1 trust like the other care actions", () => {
+    const p = pet({ trust: 50 });
+    expect(applySnackFeed(p, nonFavoriteOf(p), false).state.trust).toBe(51);
+  });
+});

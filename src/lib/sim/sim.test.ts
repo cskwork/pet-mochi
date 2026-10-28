@@ -9,12 +9,18 @@ import {
   nextWanderPosition,
   roundStats,
   runTick,
+  applyAction,
+  WAKE_ENERGY,
+  MAX_TICK_ELAPSED_SECONDS,
   type PetState,
   type RuntimeContext,
 } from "./index";
 import {
   _resetCooldowns,
   eventImportance,
+  isSalient,
+  salienceScore,
+  SALIENCE_THRESHOLD,
   shouldCallLLM,
 } from "./salience";
 
@@ -437,5 +443,98 @@ describe("roundStats (persistence boundary)", () => {
     expect(r.currentAnimation).toBe(s.currentAnimation);
     expect(r.id).toBe(s.id);
     expect(r.name).toBe(s.name);
+  });
+});
+
+// Sleep hysteresis: once asleep she stays asleep until rested (WAKE_ENERGY),
+// instead of waking one 3s tick after crossing the entry threshold.
+describe("sleep hysteresis", () => {
+  const asleep = (energy: number, extra: Partial<PetState> = {}): PetState => ({
+    ...newPetState(),
+    energy,
+    currentAnimation: "sleep",
+    ...extra,
+  });
+
+  it("stays asleep from 14 up through 59 energy", () => {
+    let s: PetState = { ...newPetState(), energy: 14 };
+    s = runTick(s, ctx, 3);
+    expect(s.currentAnimation).toBe("sleep");
+    // Recover tick by tick until just below the wake level.
+    while (s.energy < 59) {
+      s = runTick(s, ctx, 3);
+      if (s.energy < WAKE_ENERGY) expect(s.currentAnimation).toBe("sleep");
+    }
+  });
+
+  it("wakes once energy reaches WAKE_ENERGY", () => {
+    expect(WAKE_ENERGY).toBe(60);
+    expect(chooseMovement(asleep(59.9), ctx, () => 0)).toBe("sleep");
+    expect(chooseMovement(asleep(60), ctx, () => 0)).not.toBe("sleep");
+  });
+
+  it("night sleep is not broken by boredom: boredom is frozen while asleep", () => {
+    const night: RuntimeContext = { ...ctx, timeOfDay: "night" };
+    let s = asleep(25, { boredom: 59 });
+    for (let i = 0; i < 20; i++) {
+      s = runTick(s, night, 3);
+      expect(s.currentAnimation).toBe("sleep");
+    }
+    expect(s.boredom).toBe(59);
+  });
+
+  it("a Rest-induced sleep persists across ticks until rested", () => {
+    const rested = applyAction({ ...newPetState(), energy: 10 }, "rest").state;
+    expect(rested.currentAnimation).toBe("sleep");
+    expect(rested.energy).toBe(35);
+    let s = rested;
+    for (let i = 0; i < 5; i++) {
+      s = runTick(s, ctx, 3);
+      expect(s.currentAnimation).toBe("sleep");
+    }
+  });
+
+  it("asleep outranks cursor-near and the return burst", () => {
+    const s = asleep(40);
+    expect(chooseMovement(s, { ...ctx, cursorNearPet: true }, () => 0)).toBe("sleep");
+    expect(chooseMovement(s, { ...ctx, userJustReturned: true }, () => 0)).toBe("sleep");
+  });
+
+  it("boredom still rises while awake", () => {
+    const s = { ...newPetState(), boredom: 20 };
+    expect(applyDecay(s, 10).boredom).toBeGreaterThan(20);
+  });
+});
+
+describe("runTick elapsed cap", () => {
+  it("applies at most MAX_TICK_ELAPSED_SECONDS of decay after a long gap", () => {
+    const s = { ...newPetState(), hunger: 30, energy: 80 };
+    const afterGap = runTick(s, ctx, 8 * 3600);
+    const afterCap = runTick(s, ctx, MAX_TICK_ELAPSED_SECONDS);
+    expect(MAX_TICK_ELAPSED_SECONDS).toBe(60);
+    expect(afterGap.hunger).toBeCloseTo(afterCap.hunger, 5);
+    expect(afterGap.energy).toBeCloseTo(afterCap.energy, 5);
+    expect(afterGap.hunger).toBeLessThan(100);
+    expect(afterGap.energy).toBeGreaterThan(0);
+  });
+
+  it("short ticks are unaffected", () => {
+    const s = { ...newPetState(), hunger: 30 };
+    expect(runTick(s, ctx, 3).hunger).toBeCloseTo(30.3, 5);
+  });
+});
+
+describe("salience scoring is cooldown-free", () => {
+  beforeEach(() => _resetCooldowns());
+
+  it("isSalient / salienceScore never consume the shared LLM cooldown", () => {
+    const ev = { type: "STATUS_REPORT_DUE" } as const;
+    const s = newPetState();
+    expect(salienceScore(ev, s)).toBeGreaterThanOrEqual(SALIENCE_THRESHOLD);
+    expect(isSalient(ev, s)).toBe(true);
+    expect(isSalient(ev, s)).toBe(true);
+    // Cooldown still fresh → the real gate passes once.
+    expect(shouldCallLLM(ev, s)).toBe(true);
+    expect(shouldCallLLM(ev, s)).toBe(false);
   });
 });
