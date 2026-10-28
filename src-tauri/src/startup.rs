@@ -49,26 +49,43 @@ fn autostart_args_for_home(home: &Path, custom: bool) -> AppResult<Vec<String>> 
     Ok(vec!["--mochi-home".into(), path.into()])
 }
 
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-pub(crate) fn validate_linux_autostart(app_path: &str, args: &[String]) -> AppResult<()> {
-    // auto-launch 0.5.0 emits an unquoted Exec line on Linux.
-    if std::iter::once(app_path)
-        .chain(args.iter().map(String::as_str))
-        .any(|part| part.chars().any(char::is_whitespace))
-    {
-        return Err(AppError::Autostart(
-            "Linux start on login cannot use paths or arguments containing whitespace; move the app or pet home to a path without spaces".into(),
-        ));
-    }
-    Ok(())
+#[derive(Clone, Copy, Debug)]
+#[allow(dead_code)]
+pub(crate) enum AutostartTarget {
+    MacOs,
+    Linux,
+    Windows,
 }
 
-#[cfg_attr(not(windows), allow(dead_code))]
-pub(crate) fn validate_windows_autostart(args: &[String]) -> AppResult<()> {
-    if args.iter().any(|arg| arg.chars().any(char::is_whitespace)) {
-        return Err(AppError::Autostart(
-            "Windows start on login cannot pass a pet home path containing spaces; set MOCHI_HOME to a path without spaces".into(),
-        ));
+pub(crate) fn validate_autostart_launch(
+    target: AutostartTarget,
+    app_path: Option<&str>,
+    args: &[String],
+) -> AppResult<()> {
+    // auto-launch 0.5.0 does not safely escape every launch-file format.
+    // Windows executable handling stays with the plugin; validate only its arguments.
+    let windows = matches!(target, AutostartTarget::Windows);
+    // The LaunchAgent plist stores each argument as its own <string>, so a
+    // plain space is safe there; only XML metacharacters are not.
+    let macos = matches!(target, AutostartTarget::MacOs);
+    let app_path = app_path.filter(|_| !windows);
+    let invalid = app_path
+        .into_iter()
+        .chain(args.iter().map(String::as_str))
+        .flat_map(str::chars)
+        .find(|character| {
+            !character.is_alphanumeric()
+                && !matches!(
+                    character,
+                    '/' | '.' | '_' | '-' | '~' | '+' | ',' | '@' | '=' | ':'
+                )
+                && !(windows && *character == '\\')
+                && !(macos && *character == ' ')
+        });
+    if let Some(character) = invalid {
+        return Err(AppError::Autostart(format!(
+            "{target:?} start on login cannot use character {character:?}; use an app or pet home path without special characters",
+        )));
     }
     Ok(())
 }
@@ -165,42 +182,152 @@ mod tests {
     }
 
     #[test]
-    fn linux_autostart_accepts_paths_without_whitespace() {
-        for args in [
-            vec![],
-            vec!["--mochi-home".into(), "/home/mochi/반려동물".into()],
+    fn autostart_accepts_korean_paths_and_empty_arguments_on_every_target() {
+        for target in [
+            AutostartTarget::MacOs,
+            AutostartTarget::Linux,
+            AutostartTarget::Windows,
         ] {
-            validate_linux_autostart("/opt/Mochi.AppImage", &args).unwrap();
-        }
-    }
-
-    #[test]
-    fn linux_autostart_rejects_whitespace_in_executable_or_any_argument() {
-        for whitespace in [' ', '\t', '\n', '\r', '\u{2003}'] {
-            let app_path = format!("/My{whitespace}Apps/Mochi.AppImage");
-            let home = format!("/home/My{whitespace}Mochi");
-            for (path, args) in [
-                (app_path.as_str(), vec![]),
-                ("/opt/Mochi.AppImage", vec!["--mochi-home".into(), home]),
-                ("/opt/Mochi.AppImage", vec![format!("--bad{whitespace}arg")]),
+            for args in [
+                vec![],
+                vec!["--mochi-home".into(), "/home/mochi/반려동물".into()],
             ] {
-                let error = validate_linux_autostart(path, &args).unwrap_err();
-                assert!(matches!(error, AppError::Autostart(_)));
-                let message = error.to_string();
-                assert!(message.contains("move the app or pet home to a path without spaces"));
+                validate_autostart_launch(target, Some("/opt/모찌.AppImage"), &args).unwrap();
+                validate_autostart_launch(target, None, &args).unwrap();
             }
         }
     }
 
     #[test]
-    fn windows_autostart_rejects_spaced_home_args_only() {
-        validate_windows_autostart(&[]).unwrap();
-        validate_windows_autostart(&["--mochi-home".into(), r"D:\MochiHome".into()]).unwrap();
-        let error = validate_windows_autostart(&[
-            "--mochi-home".into(),
-            r"C:\Users\First Last\Mochi".into(),
-        ])
-        .unwrap_err();
+    fn autostart_accepts_every_allowed_character() {
+        for target in [
+            AutostartTarget::MacOs,
+            AutostartTarget::Linux,
+            AutostartTarget::Windows,
+        ] {
+            for character in "aZ09모찌é中/._-~+,@=:".chars() {
+                let part = format!("mochi{character}home");
+                validate_autostart_launch(target, Some(&part), &[part.clone()]).unwrap();
+            }
+        }
+    }
+
+    fn assert_rejected_character(
+        target: AutostartTarget,
+        app_path: Option<&str>,
+        args: &[String],
+        character: char,
+    ) {
+        let error = validate_autostart_launch(target, app_path, args).unwrap_err();
         assert!(matches!(error, AppError::Autostart(_)));
+        let message = error.to_string();
+        assert!(
+            message.contains(&format!("character {character:?};")),
+            "{message}"
+        );
+        assert!(
+            message.contains("path without special characters"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn autostart_rejects_forbidden_characters_in_each_argument_and_unix_app_path() {
+        for target in [
+            AutostartTarget::MacOs,
+            AutostartTarget::Linux,
+            AutostartTarget::Windows,
+        ] {
+            for character in " \t\n\r\0\u{7f}\u{2003}\u{a0}&<>\"'%$`!#;|(){}[]*?^🐾\u{301}".chars()
+            {
+                // A plain space is allowed on macOS (see the dedicated test).
+                if character == ' ' && matches!(target, AutostartTarget::MacOs) {
+                    continue;
+                }
+                let part = format!("mochi{character}home");
+                for args in [
+                    vec![part.clone()],
+                    vec!["--mochi-home".into(), part.clone()],
+                ] {
+                    assert_rejected_character(target, Some("/opt/Mochi"), &args, character);
+                }
+                if !matches!(target, AutostartTarget::Windows) {
+                    assert_rejected_character(target, Some(&part), &[], character);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn macos_autostart_rejects_xml_characters_in_app_path() {
+        assert_rejected_character(AutostartTarget::MacOs, Some("/tmp/Mochi&Me"), &[], '&');
+    }
+
+    #[test]
+    fn linux_autostart_rejects_field_codes_quotes_and_backslashes() {
+        for (path, character) in [
+            ("/home/u/mochi%f", '%'),
+            ("/home/u/\"mochi\"", '"'),
+            ("/home/u/'mochi'", '\''),
+            (r"/home/u/mochi\home", '\\'),
+        ] {
+            assert_rejected_character(AutostartTarget::Linux, Some(path), &[], character);
+            assert_rejected_character(AutostartTarget::Linux, None, &[path.into()], character);
+        }
+        assert_rejected_character(AutostartTarget::MacOs, Some(r"/tmp/mochi\home"), &[], '\\');
+    }
+
+    #[test]
+    fn windows_autostart_validates_arguments_but_ignores_app_path() {
+        let app_path = Some(r"C:\Program Files\Mochi&Me\Mochi.exe");
+        validate_autostart_launch(AutostartTarget::Windows, app_path, &[]).unwrap();
+        validate_autostart_launch(
+            AutostartTarget::Windows,
+            app_path,
+            &["--mochi-home".into(), r"C:\Users\Me\Mochi".into()],
+        )
+        .unwrap();
+        assert_rejected_character(
+            AutostartTarget::Windows,
+            app_path,
+            &["--mochi-home".into(), r"C:\Users\First Last\Mochi".into()],
+            ' ',
+        );
+    }
+
+    #[test]
+    fn autostart_reports_first_offending_character_in_launch_order() {
+        for target in [AutostartTarget::MacOs, AutostartTarget::Linux] {
+            assert_rejected_character(target, Some("/tmp/Mochi&Me%f"), &["$home".into()], '&');
+        }
+        for target in [
+            AutostartTarget::MacOs,
+            AutostartTarget::Linux,
+            AutostartTarget::Windows,
+        ] {
+            assert_rejected_character(
+                target,
+                Some("/opt/Mochi"),
+                &["/home/first%f&name".into(), "$home".into()],
+                '%',
+            );
+        }
+    }
+
+    #[test]
+    fn macos_allows_plain_spaces_but_not_xml_metacharacters() {
+        validate_autostart_launch(
+            AutostartTarget::MacOs,
+            Some("/Users/me/My Apps/pet-mochi.app/Contents/MacOS/pet-mochi"),
+            &["--mochi-home".into(), "/Users/me/Mochi Home".into()],
+        )
+        .unwrap();
+        assert!(validate_autostart_launch(
+            AutostartTarget::MacOs,
+            Some("/Applications/pet-mochi.app/Contents/MacOS/pet-mochi"),
+            &["--mochi-home".into(), "/Users/me/Mochi\tHome".into()],
+        )
+        .is_err());
+        assert!(validate_autostart_launch(AutostartTarget::Linux, Some("/My Apps/Mochi.AppImage"), &[]).is_err());
     }
 }

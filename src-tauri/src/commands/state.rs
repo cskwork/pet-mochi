@@ -100,9 +100,23 @@ pub fn save_settings(
             },
             |enabled| {
                 let (action, result) = if enabled {
+                    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+                    use crate::startup::{validate_autostart_launch, AutostartTarget};
+                    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+                    use tauri::Manager;
+                    #[cfg(target_os = "macos")]
+                    {
+                        let app_path = std::env::current_exe()
+                            .and_then(|path| path.canonicalize())
+                            .map_err(|e| AppError::Autostart(format!("could not read executable path: {e}")))?;
+                        validate_autostart_launch(
+                            AutostartTarget::MacOs,
+                            Some(&app_path.display().to_string()),
+                            &app.state::<crate::startup::AutostartArgs>().inner().0,
+                        )?;
+                    }
                     #[cfg(target_os = "linux")]
                     {
-                        use tauri::Manager;
                         let app_path = if let Some(appimage) = app
                             .env()
                             .appimage
@@ -115,17 +129,17 @@ pub fn save_settings(
                                 .display()
                                 .to_string()
                         };
-                        crate::startup::validate_linux_autostart(
-                            &app_path,
+                        validate_autostart_launch(
+                            AutostartTarget::Linux,
+                            Some(&app_path),
                             &app.state::<crate::startup::AutostartArgs>().inner().0,
                         )?;
                     }
-                    // auto-launch 0.5 also writes the Windows Run value unquoted
-                    // (`{path} {args}`), so a spaced --mochi-home would split.
                     #[cfg(windows)]
                     {
-                        use tauri::Manager;
-                        crate::startup::validate_windows_autostart(
+                        validate_autostart_launch(
+                            AutostartTarget::Windows,
+                            None,
                             &app.state::<crate::startup::AutostartArgs>().inner().0,
                         )?;
                     }
@@ -143,17 +157,18 @@ fn sync_start_on_login(
     enabled: bool,
     is_enabled: impl FnOnce() -> AppResult<bool>,
     set_enabled: impl FnOnce(bool) -> AppResult<()>,
-) -> AppResult<()> {
-    if is_enabled()? != enabled {
-        set_enabled(enabled)?;
+) -> AppResult<bool> {
+    if is_enabled()? == enabled {
+        return Ok(false);
     }
-    Ok(())
+    set_enabled(enabled)?;
+    Ok(true)
 }
 
 fn save_settings_inner(
     state: &AppState,
     settings: Settings,
-    mut sync_login: impl FnMut(bool) -> AppResult<()>,
+    mut sync_login: impl FnMut(bool) -> AppResult<bool>,
 ) -> AppResult<Settings> {
     if settings.local_only_mode
         && settings.llm_provider == "ollama"
@@ -183,13 +198,15 @@ fn save_settings_inner(
     // autostart error can't block unrelated saves (skin, name, …). Failures
     // reject the invoke before any settings or rename is saved.
     let previous_start_on_login = load_settings_raw(&state.db)?.start_on_login;
-    let login_changed = previous_start_on_login != to_persist.start_on_login;
-    if login_changed {
-        sync_login(to_persist.start_on_login)?;
-    }
+    let os_login_changed = if previous_start_on_login != to_persist.start_on_login {
+        sync_login(to_persist.start_on_login)?
+    } else {
+        false
+    };
     if let Err(error) = state.db.put_settings_and_rename_pet(SETTINGS_KEY, &json, PET_STATE_ID, &to_persist.pet_name) {
-        if login_changed {
-            if let Err(rollback_error) = sync_login(previous_start_on_login) {
+        if os_login_changed {
+            // A changed boolean OS state was observed as the opposite of the request.
+            if let Err(rollback_error) = sync_login(!to_persist.start_on_login) {
                 log::warn!("could not restore start on login after settings save failed: {rollback_error}");
             }
         }
@@ -271,7 +288,7 @@ mod tests {
         let state = AppState::new(Arc::new(Db::open(&path).unwrap()), home.path().to_path_buf());
         let mut previous = Settings::default();
         previous.start_on_login = start_on_login;
-        save_settings_inner(&state, previous, |_| Ok(())).unwrap();
+        save_settings_inner(&state, previous, |_| Ok(false)).unwrap();
         load_or_init_pet_state(&state.db).unwrap();
         rusqlite::Connection::open(&path).unwrap().execute_batch(
             "CREATE TRIGGER reject_pet_rename BEFORE UPDATE OF name ON pet_state
@@ -295,6 +312,37 @@ mod tests {
     }
 
     #[test]
+    fn persistence_failure_preserves_already_matching_os_login_state() {
+        // The database and OS can disagree before the user changes the toggle.
+        for requested in [true, false] {
+            let (_home, state) = rename_failure_state(!requested);
+            let previous_settings = state.db.get_setting(SETTINGS_KEY).unwrap();
+            let previous_pet = load_or_init_pet_state(&state.db).unwrap();
+            let previous_provider = state.llm.read().as_ref().unwrap().clone();
+            let os_enabled = Cell::new(requested);
+            let sync_calls = RefCell::new(Vec::new());
+            let mut settings = load_settings_raw(&state.db).unwrap();
+            settings.start_on_login = requested;
+            settings.pet_name = "Must not rename".into();
+            settings.llm_provider = "none".into();
+
+            let err = save_settings_inner(&state, settings, |enabled| {
+                sync_calls.borrow_mut().push(enabled);
+                sync_start_on_login(enabled, || Ok(os_enabled.get()), |value| {
+                    os_enabled.set(value);
+                    Ok(())
+                })
+            }).unwrap_err();
+
+            assert!(matches!(&err, AppError::Db(_)));
+            assert!(err.to_string().contains("test rename rejected"));
+            assert_eq!(*sync_calls.borrow(), [requested]);
+            assert_eq!(os_enabled.get(), requested);
+            assert_failed_save_unchanged(&state, &previous_settings, &previous_pet, &previous_provider);
+        }
+    }
+
+    #[test]
     fn settings_persistence_failure_restores_login_toggle_in_both_directions() {
         for previous_enabled in [false, true] {
             let (_home, state) = rename_failure_state(previous_enabled);
@@ -310,8 +358,10 @@ mod tests {
 
             let err = save_settings_inner(&state, settings, |enabled| {
                 sync_calls.borrow_mut().push(enabled);
-                os_enabled.set(enabled);
-                Ok(())
+                sync_start_on_login(enabled, || Ok(os_enabled.get()), |value| {
+                    os_enabled.set(value);
+                    Ok(())
+                })
             }).unwrap_err();
 
             assert!(matches!(&err, AppError::Db(_)));
@@ -336,7 +386,7 @@ mod tests {
 
         let err = save_settings_inner(&state, settings, |enabled| {
             sync_calls.borrow_mut().push(enabled);
-            if enabled { Ok(()) } else { Err(AppError::Autostart("rollback rejected".into())) }
+            if enabled { Ok(true) } else { Err(AppError::Autostart("rollback rejected".into())) }
         }).unwrap_err();
 
         assert!(matches!(&err, AppError::Db(_)));
@@ -429,7 +479,7 @@ mod tests {
             for requested in [true, false] {
                 let queries = Cell::new(0);
                 let updates = Cell::new(0);
-                sync_start_on_login(requested, || {
+                let changed = sync_start_on_login(requested, || {
                     queries.set(queries.get() + 1);
                     Ok(current)
                 }, |enabled| {
@@ -437,6 +487,7 @@ mod tests {
                     updates.set(updates.get() + 1);
                     Ok(())
                 }).unwrap();
+                assert_eq!(changed, current != requested);
                 assert_eq!(queries.get(), 1);
                 assert_eq!(updates.get(), usize::from(current != requested));
             }
@@ -450,7 +501,7 @@ mod tests {
             let mut previous = Settings::default();
             previous.llm_provider = "none".into();
             previous.start_on_login = !requested;
-            save_settings_inner(&state, previous, |_| Ok(())).unwrap();
+            save_settings_inner(&state, previous, |_| Ok(false)).unwrap();
             let before = state.db.get_setting(SETTINGS_KEY).unwrap();
             let pet = load_or_init_pet_state(&state.db).unwrap();
             let mut settings = Settings::default();
@@ -488,7 +539,7 @@ mod tests {
         settings.stage_background = "unknown".into();
         settings.cloud_api_key_set = true;
 
-        let echoed = save_settings_inner(&state, settings, |_| Ok(())).unwrap();
+        let echoed = save_settings_inner(&state, settings, |_| Ok(false)).unwrap();
         assert_eq!(echoed.pet_name, "가🐾".repeat(12));
         assert_eq!(echoed.pet_scale, 1.0);
         assert_eq!(echoed.pet_skin, "classic");
@@ -516,7 +567,7 @@ mod tests {
         settings.personality_preset = "quiet".into();
         for (value, expected) in [(0.1, 0.75), (2.0, 1.5), (1.25, 1.25), (f32::INFINITY, 1.0)] {
             settings.pet_scale = value;
-            let echoed = save_settings_inner(&state, settings.clone(), |_| Ok(())).unwrap();
+            let echoed = save_settings_inner(&state, settings.clone(), |_| Ok(false)).unwrap();
             assert_eq!(echoed.pet_name, "Peach");
             assert_eq!(echoed.pet_skin, "peach");
             assert_eq!(echoed.pet_accessory, "bow");
@@ -525,7 +576,7 @@ mod tests {
             assert_eq!(load_settings_raw(&state.db).unwrap().pet_scale, expected);
         }
         settings.pet_name = " \t\n".into();
-        assert_eq!(save_settings_inner(&state, settings, |_| Ok(())).unwrap().pet_name, "Mochi");
+        assert_eq!(save_settings_inner(&state, settings, |_| Ok(false)).unwrap().pet_name, "Mochi");
     }
 
     #[test]
@@ -549,7 +600,7 @@ mod tests {
         let mut settings = Settings::default();
         settings.llm_provider = "none".into();
         settings.pet_name = "  New name  ".into();
-        let echoed = save_settings_inner(&state, settings, |_| Ok(())).unwrap();
+        let echoed = save_settings_inner(&state, settings, |_| Ok(false)).unwrap();
         let renamed = state.db.load_pet_state(&pet.id).unwrap().unwrap();
         assert_eq!(renamed.name, "New name");
         assert_eq!(renamed.name, echoed.pet_name);
@@ -571,7 +622,7 @@ mod tests {
         let mut settings = Settings::default();
         settings.pet_name = "Should not save".into();
         settings.ollama_endpoint = "http://example.com".into();
-        assert!(matches!(save_settings_inner(&state, settings, |_| Ok(())), Err(AppError::InvalidInput(_))));
+        assert!(matches!(save_settings_inner(&state, settings, |_| Ok(false)), Err(AppError::InvalidInput(_))));
         assert!(state.db.get_setting(SETTINGS_KEY).unwrap().is_none());
         assert_eq!(
             serde_json::to_value(state.db.load_pet_state(&pet.id).unwrap().unwrap()).unwrap(),
