@@ -378,6 +378,7 @@
               max="1.5"
               step="0.05"
               bind:value={settings.petScale}
+              oninput={() => saver.noteEdit("petScale")}
               onchange={() => saveFields("petScale")}
             aria-invalid={fieldErrors.petScale ? "true" : undefined}
             aria-describedby={describe("petScale")}
@@ -544,6 +545,7 @@
             max="1.5"
             step="0.1"
             bind:value={settings.animationIntensity}
+            oninput={() => saver.noteEdit("animationIntensity")}
             onchange={() => saveFields("animationIntensity")}
             aria-invalid={fieldErrors.animationIntensity ? "true" : undefined}
             aria-describedby={describe("animationIntensity")}
