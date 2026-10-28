@@ -212,7 +212,7 @@ flowchart LR
 
 - Ollama is the only LLM provider implemented (`src-tauri/src/llm/ollama.rs`); without a running Ollama,
   Mochi still animates and reacts but does not chat.
-- Desktop only: this is a Tauri 2 build for macOS, Windows and Linux, separate from the iOS app of the
+- Desktop only: this is a Tauri 2 desktop app, separate from the iOS app of the
   same name on the App Store.
 - Memory search is keyword-based (FTS5 prefix search re-ranked by weights), not semantic.
 
