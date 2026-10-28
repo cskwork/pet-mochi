@@ -10,8 +10,8 @@ optional local LLM. Works fully offline. No accounts. No cloud. No telemetry.
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](#license)
 [![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)](https://tauri.app)
 [![Svelte 5](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte&logoColor=white)](https://svelte.dev)
-[![Rust](https://img.shields.io/badge/Rust-1.77+-orange?logo=rust&logoColor=white)](https://www.rust-lang.org)
-[![Tests](https://img.shields.io/badge/tests-292%20passing-brightgreen)](#run-tests)
+[![Rust](https://img.shields.io/badge/Rust-1.89+-orange?logo=rust&logoColor=white)](https://www.rust-lang.org)
+[![Tests](https://img.shields.io/badge/tests-405%20passing-brightgreen)](#run-tests)
 
 <img src="public/sprites/mochi-celebrate.png" width="200" alt="Mochi celebrating" />
 
@@ -71,7 +71,7 @@ npm run tauri:dev          # launches the desktop pet
 ```
 
 **Requirements**
-- Node ≥ 20 · Rust ≥ 1.77
+- Node ≥ 20 · Rust ≥ 1.89
 - Windows / macOS / Linux (Tauri 2 supported platforms)
 - *Optional:* [Ollama](https://ollama.com/) for chat replies
 
@@ -91,6 +91,12 @@ core experience.
 - **Feels alive between interactions** — mood-weighted idle micro-quirks,
   squash-and-stretch juice on every press, and particle bursts (hearts,
   crumbs, confetti, z's) on care moments.
+- **A personality of her own** — curious, lazy, playful, or quiet. The
+  preset changes how often she fidgets, which poses she favors, how far she
+  wanders, when she naps, and how she talks when an LLM is on.
+- **Make her yours** — rename her, scale her 0.75–1.5×, pick a skin (classic
+  / peach / matcha / sky / lavender / cocoa), and add a bow, flower, crown,
+  top hat, or cap. Settings → Appearance, applied live.
 - **Mood you can read at a glance** — color tints + glyphs (🍡 hungry,
   … bored, ♡ lonely, ? curious) so similar mood tones stay distinguishable.
 - **Tamagotchi-style actions** — Feed (with a 3-snack tray, snack-specific
@@ -125,7 +131,7 @@ core experience.
 
 ### Coming next (roadmap)
 
-Further out: Voice (opt-in) · Custom skins · Live2D / VRM · Git/test-runner
+Further out: Voice (opt-in) · Custom sprite sets · Live2D / VRM · Git/test-runner
 watcher · Local embedding memory search · Multiple pets · Wardrobe & growth
 stages. See [`PRD.md`](./PRD.md) §24 and §27.8.
 
@@ -227,8 +233,8 @@ sandbox.
 ### Run tests
 
 ```bash
-npm test                                 # 213 frontend simulation tests (vitest)
-cd src-tauri && cargo test --lib         # 79 backend tests (db, sandbox, llm, prompts)
+npm test                                 # 303 frontend simulation tests (vitest)
+cd src-tauri && cargo test --lib         # 102 backend tests (db, sandbox, llm, prompts)
 ```
 
 ### Type-check & build

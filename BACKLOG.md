@@ -203,6 +203,40 @@ safe: a silent no-op, never a wrong-position window.
 
 ---
 
+## MEDIUM #23 — Retention for `event_log` and `interactions` (2026-10-28 audit)
+
+**Files**
+- `src-tauri/src/db.rs` — `log_event`, interaction and memory inserts
+
+**Issue**
+Nothing ever prunes `event_log` or `interactions`, so the DB, its indexes
+and FTS grow without bound over months of use.
+
+**Why deferred**
+Pruning deletes user data. Needs a product decision on what to keep (e.g.
+`event_log` 30 days, interactions kept or user-controlled) before any
+automatic deletion ships.
+
+---
+
+## LOW #24 — Settings that still do nothing
+
+`startOnLogin` (needs `tauri-plugin-autostart` + a capability),
+`petHomePath` (the sandbox only reads `MOCHI_HOME` / the default path), and
+`developerEventLog` are saved but never read. Either wire them or hide them
+from Settings.
+
+---
+
+## LOW #25 — Needs pacing feels demanding
+
+Hunger rises 0.1/s, so Mochi turns "hungry" ~7.5 min after a feed and
+"bored" after ~9. Personality presets now scale energy drain and boredom
+gain only. Consider slower base rates or a hunger multiplier per preset;
+it changes how often nudges fire, so tune with real sessions.
+
+---
+
 ## References
 
 - Codex review output (gitignored): `codex-uiux-out.txt`

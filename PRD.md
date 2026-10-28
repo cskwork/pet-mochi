@@ -1484,3 +1484,47 @@ Acceptance: the four checks (`npm test`, `npm run check` 0/0,
 `cargo test --lib`, `cargo build`) pass at every step; no new persistent
 timers (REQ-113); `sim/` stays pure; the salience gate is untouched
 (notifications are deterministic, not LLM).
+
+---
+
+## 29. v0.2.x — Lively Update (core-loop fixes, personality, appearance)
+
+> Origin: 2026-10-28 audit (frontend, backend, desktop-pet research). See
+> `log/changelog-2026-10-28.md` for the bug list and evidence.
+
+**REQ-125:** Presence. The user is *away* after 30 min with no global cursor
+movement and no pet interaction (`sim/presence.ts`). `USER_RETURNED` fires
+once on the away→active edge with the real away duration; `userJustReturned`
+holds for 10 s. Cursor samples are compared in memory and never stored.
+
+**REQ-126:** Sleep hysteresis. Once asleep, Mochi stays asleep until energy
+≥ 60 unless a user action wakes her; boredom does not rise while asleep.
+
+**REQ-127:** Bond growth. Trust +1 per care action (not Rest);
+`relationshipLevel` +0.5 per care action ≥ 10 min after the previous
+interaction; stress +6 on a dizzy drag landing. All clamped 0–100.
+
+**REQ-128:** Single-owner writes. Commands that await the LLM update only the
+columns they own (`last_llm_call_at`, `last_report_at`, chat deltas) and
+never save a pre-await pet snapshot; the frontend merges only those fields.
+Per-tick decay is capped at 60 s.
+
+**REQ-129:** Personality. `personalityPreset` ∈ {curious, lazy, playful,
+quiet} tunes quirk chance and pools, idle-pose weights, walk threshold,
+wander step, sleep thresholds, nudge cooldown, and gentle decay multipliers
+(`sim/personality.ts`); `curious` equals pre-v0.2.x behavior. The backend
+adds a one-line persona to every pet-voiced prompt.
+
+**REQ-130:** Appearance. `petScale` (0.75–1.5), `petSkin` (classic, peach,
+matcha, sky, lavender, cocoa — CSS filter on a wrapper, composes with mood
+tint) and `petAccessory` (none, bow, flower, crown, tophat, cap — emoji
+anchored per pose, hidden in sleep/roll/hide/peek). Closed lists normalized
+in Rust; serde-defaulted for older settings. Rename and `alwaysOnTop` apply
+live.
+
+**REQ-131:** Hover reaction. `USER_HOVERED_PET` plays a 1–2 step beat chosen
+by mood and personality; 20 s cooldown; never asleep, mid-action or while
+dragging; no LLM call, no sound.
+
+Acceptance: the four checks pass; `sim/` stays pure; no new capability
+widening; autonomous behavior stays silent (§27.2).

@@ -20,7 +20,7 @@ npm install
 npm run tauri:dev          # the desktop pet, hot-reloaded
 ```
 
-You need **Node ≥ 20** and **Rust ≥ 1.77**. Tauri builds the Rust backend on
+You need **Node ≥ 20** and **Rust ≥ 1.89**. Tauri builds the Rust backend on
 first run (a few minutes); subsequent rebuilds are seconds.
 
 ---
