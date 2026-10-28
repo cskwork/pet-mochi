@@ -42,12 +42,19 @@ pub(crate) fn simplify_verbatim(path: PathBuf) -> PathBuf {
         return path;
     };
     const MAX_PATH: usize = 260;
+    // Device names stay reserved with any extension or trailing spaces, and
+    // COM/LPT also take the superscript digits ¹ ² ³.
     let reserved = |name: &str| {
-        let stem = name.split('.').next().unwrap_or("").to_ascii_uppercase();
-        matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-            || ((stem.starts_with("COM") || stem.starts_with("LPT"))
-                && stem.len() == 4
-                && stem.as_bytes()[3].is_ascii_digit())
+        let stem = name.split('.').next().unwrap_or("").trim_end().to_ascii_uppercase();
+        if matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$") {
+            return true;
+        }
+        let mut chars = stem.chars();
+        let prefix: String = chars.by_ref().take(3).collect();
+        let rest: Vec<char> = chars.collect();
+        (prefix == "COM" || prefix == "LPT")
+            && rest.len() == 1
+            && (rest[0].is_ascii_digit() || matches!(rest[0], '¹' | '²' | '³'))
     };
     let safe = plain.len() < MAX_PATH
         && plain
@@ -391,6 +398,9 @@ mod tests {
         for keep in [
             r"\\?\C:\Users\Me\CON".to_string(),
             r"\\?\C:\Users\Me\nul.txt".to_string(),
+            r"\\?\C:\pets\COM¹\home".to_string(),
+            r"\\?\C:\pets\lpt³.log\home".to_string(),
+            r"\\?\C:\pets\CON .txt".to_string(),
             r"\\?\C:\Users\Me\trailing.".to_string(),
             r"\\?\C:\Users\Me\trailing ".to_string(),
             r"\\?\GLOBALROOT\Device\Mochi".to_string(),

@@ -422,8 +422,10 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let actual = home.path().canonicalize().unwrap();
         let state = AppState::new(Arc::new(Db::open_in_memory().unwrap()), actual.clone());
-        let expected = Some(actual.to_string_lossy().into_owned());
+        // Display form (Windows drops a safe \\?\ prefix); the state keeps the canonical path.
+        let expected = Some(crate::startup::simplify_verbatim(actual.clone()).to_string_lossy().into_owned());
         assert_eq!(get_settings_inner(&state).unwrap().pet_home_path, expected);
+        assert_eq!(state.pet_home, actual);
         let mut legacy = Settings::default();
         legacy.pet_home_path = Some("/obsolete/home".into());
         state.db.put_setting(SETTINGS_KEY, &serde_json::to_string(&legacy).unwrap()).unwrap();
@@ -449,7 +451,10 @@ mod tests {
             }).unwrap();
             assert_eq!(os_enabled.get(), enabled);
             assert_eq!(echoed.start_on_login, enabled);
-            assert_eq!(echoed.pet_home_path, Some(actual.to_string_lossy().into_owned()));
+            assert_eq!(
+                echoed.pet_home_path,
+                Some(crate::startup::simplify_verbatim(actual.clone()).to_string_lossy().into_owned())
+            );
             let loaded = get_settings_inner(&state).unwrap();
             assert_eq!(loaded.start_on_login, enabled);
             assert_eq!(loaded.pet_home_path, echoed.pet_home_path);
