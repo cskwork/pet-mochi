@@ -6,7 +6,7 @@ use std::pin::Pin;
 use std::time::Duration;
 
 pub struct OllamaProvider {
-    client: reqwest::Client,
+    client: Result<reqwest::Client, reqwest::Error>,
     base_url: String,
     default_model: String,
 }
@@ -15,8 +15,8 @@ impl OllamaProvider {
     pub fn new(base_url: impl Into<String>, default_model: impl Into<String>) -> Self {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+            .redirect(reqwest::redirect::Policy::none())
+            .build();
         Self {
             client,
             base_url: base_url.into().trim_end_matches('/').to_string(),
@@ -76,8 +76,11 @@ impl LlmProvider for OllamaProvider {
                 },
             };
             let url = format!("{}/api/generate", self.base_url);
-            let resp = self
+            let client = self
                 .client
+                .as_ref()
+                .map_err(|e| AppError::LlmUnavailable(format!("ollama client initialization failed: {e}")))?;
+            let resp = client
                 .post(&url)
                 .json(&body)
                 .send()
@@ -107,5 +110,43 @@ impl LlmProvider for OllamaProvider {
                 model: if parsed.model.is_empty() { model } else { parsed.model },
             })
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::OllamaProvider;
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+
+    #[tokio::test]
+    async fn client_does_not_follow_redirects() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let location = format!("{endpoint}/redirected");
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = BufReader::new(&mut stream);
+            let mut line = String::new();
+            loop {
+                line.clear();
+                assert!(request.read_line(&mut line).unwrap() > 0);
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            write!(
+                stream,
+                "HTTP/1.1 307 Temporary Redirect\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            )
+            .unwrap();
+        });
+
+        let provider = OllamaProvider::new(endpoint.clone(), "test-model");
+        let response = provider.client.as_ref().unwrap().get(&endpoint).send().await.unwrap();
+        server.join().unwrap();
+
+        assert_eq!(response.status(), reqwest::StatusCode::TEMPORARY_REDIRECT);
+        assert_eq!(response.url().as_str(), format!("{endpoint}/"));
     }
 }

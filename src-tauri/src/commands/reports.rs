@@ -1,6 +1,7 @@
 //! Daily reflection, idle status reports, choreography, interaction
 //! reports, and the event log.
 
+use crate::db::Db;
 use crate::error::{AppError, AppResult};
 use crate::llm::prompts::{
     choreography_prompt, interaction_report_prompt, reflection_prompt, status_report_prompt,
@@ -28,7 +29,15 @@ use tauri::State;
 use uuid::Uuid;
 
 use super::chat::{parse_json_object, sanitize_llm_text};
-use super::state::load_or_init_pet_state;
+use super::state::{load_or_init_pet_state, load_settings_raw};
+
+fn load_report_memories(db: &Db, limit: i64) -> AppResult<Vec<crate::models::Memory>> {
+    if load_settings_raw(db)?.memory_enabled {
+        db.list_memories(limit)
+    } else {
+        Ok(Vec::new())
+    }
+}
 
 // ============== Daily reflection ==============
 
@@ -57,7 +66,7 @@ pub async fn run_daily_reflection(state: State<'_, AppState>) -> AppResult<Daily
         .clone()
         .run(move |db| db.interactions_between(&start_clone, &end_clone, 200))
         .await?;
-    let memories = db.clone().run(|db| db.list_memories(20)).await?;
+    let memories = db.clone().run(|db| load_report_memories(db, 20)).await?;
 
     let events_text = if interactions.is_empty() {
         "(no interactions today)".to_string()
@@ -199,8 +208,8 @@ pub async fn run_status_report(state: State<'_, AppState>) -> AppResult<StatusRe
         .clone()
         .run(move |db| db.interactions_between(&ws, &we, 200))
         .await?;
-    // Top-3 memories — kept tiny per REQ-075.
-    let memories = db.clone().run(|db| db.list_memories(3)).await?;
+    // Top-3 memories when enabled — kept tiny per REQ-075.
+    let memories = db.clone().run(|db| load_report_memories(db, 3)).await?;
 
     let summary = summarize_window(
         &events,
@@ -243,11 +252,8 @@ pub async fn run_status_report(state: State<'_, AppState>) -> AppResult<StatusRe
         .run(move |db| db.save_status_report(new_row))
         .await?;
 
-    let mut next_pet = pet.clone();
-    next_pet.last_report_at = Some(window_end_iso.clone());
-    next_pet.updated_at = now_rfc3339();
     db.clone()
-        .run(move |db| db.save_pet_state(&next_pet))
+        .run(move |db| db.update_last_report_at(&pet.id, &window_end_iso))
         .await?;
     db.clone()
         .run(|db| db.log_event("STATUS_REPORT_DUE", None, Some(70)).map(|_| ()))
@@ -477,4 +483,31 @@ pub fn log_event(
         return Err(AppError::InvalidInput("invalid event_type".into()));
     }
     state.db.log_event(&event_type, payload.as_deref(), salience)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{NewMemory, Settings};
+
+    #[test]
+    fn report_memories_honor_memory_setting() {
+        let db = Db::open_in_memory().unwrap();
+        db.create_memory(NewMemory {
+            r#type: "preference".into(),
+            content: "private memory".into(),
+            importance: None,
+            confidence: None,
+            source_interaction_id: None,
+        }).unwrap();
+        let mut settings = Settings::default();
+        for enabled in [true, false] {
+            settings.memory_enabled = enabled;
+            db.put_setting("settings:v1", &serde_json::to_string(&settings).unwrap()).unwrap();
+            for limit in [3, 20] {
+                let memories = load_report_memories(&db, limit).unwrap();
+                assert_eq!(memories.len(), usize::from(enabled));
+            }
+        }
+    }
 }

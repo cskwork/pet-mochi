@@ -5,7 +5,7 @@ description = "Local-first AI digital pet — Mochi"
 authors = ["Pet Mochi"]
 license = "MIT"
 edition = "2021"
-rust-version = "1.77"
+rust-version = "1.89"
 
 [lib]
 name = "pet_mochi_lib"
@@ -32,6 +32,9 @@ log = "0.4"
 env_logger = "0.11"
 dirs = "5.0"
 once_cell = "1.20"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3.10"

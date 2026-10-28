@@ -44,6 +44,31 @@ fn validate_within(root: &Path, candidate: &Path) -> AppResult<PathBuf> {
     Ok(canonical_candidate)
 }
 
+/// Require a real directory inside the canonical home. Parent-directory swaps
+/// between this check and file open remain possible without directory handles.
+fn validate_subdir(home: &Path, subdir: &str) -> AppResult<PathBuf> {
+    let dir = home.join(subdir);
+    let meta = std::fs::symlink_metadata(&dir)
+        .map_err(|_| AppError::Permission("sandbox directory missing or unreadable".into()))?;
+    if is_link(&meta) || !meta.is_dir() {
+        return Err(AppError::Permission("sandbox directory must be a real directory".into()));
+    }
+    validate_within(home, &dir)
+}
+
+fn is_link(meta: &std::fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+        meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    }
+    #[cfg(not(windows))]
+    {
+        meta.file_type().is_symlink()
+    }
+}
+
 /// Result of an inbox read — both the content and the canonical path that was
 /// actually opened, so callers can record exactly what was read (no TOCTOU window
 /// for path strings to drift between validation and use).
@@ -59,14 +84,12 @@ pub struct InboxRead {
 /// on-disk files.
 ///
 /// TOCTOU mitigation:
-/// 1. Pre-open: `symlink_metadata` rejects entries whose file type is a symlink
-///    or which are not a regular file. This is *not* a complete reparse-point
-///    check on Windows (junctions and other reparse types don't surface as
-///    `is_symlink()`); it is a cheap first-line filter.
+/// 1. Pre-open: `symlink_metadata` rejects symlinks, Windows reparse points,
+///    and entries which are not regular files.
 /// 2. The real guard is `open_no_follow` below, which opens with
 ///    `FILE_FLAG_OPEN_REPARSE_POINT` on Windows (refuses to traverse ANY
 ///    reparse point) and `O_NOFOLLOW` on Unix. Combined with the post-open
-///    `is_file()` re-check this closes the swap-then-redirect window.
+///    metadata re-check this closes the final-component swap-then-redirect window.
 pub fn read_inbox_by_name(home: &Path, file_name: &str) -> AppResult<InboxRead> {
     if file_name.is_empty()
         || file_name.contains('/')
@@ -76,17 +99,13 @@ pub fn read_inbox_by_name(home: &Path, file_name: &str) -> AppResult<InboxRead> 
     {
         return Err(AppError::Permission("invalid inbox file name".into()));
     }
-    let inbox = home.join("inbox");
-    let canonical_inbox = inbox
-        .canonicalize()
-        .map_err(|_| AppError::Permission("inbox missing or unreadable".into()))?;
+    let canonical_inbox = validate_subdir(home, "inbox")?;
     let candidate = canonical_inbox.join(file_name);
 
-    // Defense in depth: refuse any path component that is itself a reparse
-    // point. This blocks the symlink-swap TOCTOU before we ever open.
+    // Defense in depth: reject linked inbox entries before opening them.
     let pre_meta = std::fs::symlink_metadata(&candidate)
         .map_err(|_| AppError::Permission("inbox entry missing".into()))?;
-    if pre_meta.file_type().is_symlink() {
+    if is_link(&pre_meta) {
         return Err(AppError::Permission("symlinks are not allowed in inbox".into()));
     }
     if !pre_meta.is_file() {
@@ -100,7 +119,7 @@ pub fn read_inbox_by_name(home: &Path, file_name: &str) -> AppResult<InboxRead> 
 
     let file = open_no_follow(&canonical)?;
     let meta = file.metadata()?;
-    if !meta.is_file() {
+    if is_link(&meta) || !meta.is_file() {
         return Err(AppError::Permission("opened handle is not a regular file".into()));
     }
     if meta.len() > MAX_FILE_BYTES {
@@ -128,54 +147,26 @@ pub fn read_inbox_by_name(home: &Path, file_name: &str) -> AppResult<InboxRead> 
     })
 }
 
-/// Open `path` without following symlinks or reparse points. On Windows this
-/// uses FILE_FLAG_OPEN_REPARSE_POINT; on Unix we rely on `O_NOFOLLOW` via the
-/// custom_flags extension, falling back to `File::open` only if neither is
-/// available (in which case the symlink_metadata pre-check above is the guard).
-fn open_no_follow(path: &Path) -> AppResult<std::fs::File> {
+/// Refuse final-component symlinks on Unix and open reparse points themselves
+/// on Windows so handle metadata can reject them before reading or truncating.
+fn no_follow_options() -> std::fs::OpenOptions {
+    let mut options = std::fs::OpenOptions::new();
     #[cfg(windows)]
     {
         use std::os::windows::fs::OpenOptionsExt;
-        // 0x00200000 = FILE_FLAG_OPEN_REPARSE_POINT — opens the reparse point
-        // itself rather than following it. Combined with the pre-open
-        // symlink_metadata check, this leaves no useful TOCTOU window.
         const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
-        Ok(std::fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
-            .open(path)?)
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
     }
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        const O_NOFOLLOW: i32 = libc_o_nofollow();
-        Ok(std::fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(O_NOFOLLOW)
-            .open(path)?)
+        options.custom_flags(libc::O_NOFOLLOW);
     }
-    #[cfg(not(any(windows, unix)))]
-    {
-        Ok(std::fs::File::open(path)?)
-    }
+    options
 }
 
-#[cfg(unix)]
-const fn libc_o_nofollow() -> i32 {
-    // O_NOFOLLOW is 0x20000 on Linux, 0x100 on macOS/BSD. We pick the
-    // platform-appropriate value at compile time without taking a libc dep.
-    #[cfg(target_os = "linux")]
-    {
-        0x2_0000
-    }
-    #[cfg(target_os = "macos")]
-    {
-        0x0100
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    {
-        0
-    }
+fn open_no_follow(path: &Path) -> AppResult<std::fs::File> {
+    Ok(no_follow_options().read(true).open(path)?)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -190,9 +181,12 @@ pub struct InboxFile {
 /// cannot later reference arbitrary on-disk files.
 pub fn list_inbox(home: &Path) -> AppResult<Vec<InboxFile>> {
     let inbox = home.join("inbox");
-    if !inbox.exists() {
-        return Ok(Vec::new());
+    match std::fs::symlink_metadata(&inbox) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(err.into()),
+        Ok(_) => {}
     }
+    let inbox = validate_subdir(home, "inbox")?;
     let mut out = Vec::new();
     for entry in std::fs::read_dir(&inbox)? {
         let entry = entry?;
@@ -254,9 +248,18 @@ fn write_in_subdir(home: &Path, subdir: &str, file_name: &str, content: &str) ->
     }
     let dir = home.join(subdir);
     std::fs::create_dir_all(&dir)?;
-    let target = dir.join(file_name);
-    std::fs::write(&target, content)?;
-    Ok(target)
+    let canonical_dir = validate_subdir(home, subdir)?;
+    let target = canonical_dir.join(file_name);
+    let mut file = no_follow_options().write(true).create(true).open(&target)?;
+    let meta = file.metadata()?;
+    if is_link(&meta) || !meta.is_file() {
+        return Err(AppError::Permission("write target is not a regular file".into()));
+    }
+    // Truncate only after the opened handle has passed the checks above.
+    file.set_len(0)?;
+    use std::io::Write;
+    file.write_all(content.as_bytes())?;
+    Ok(dir.join(file_name))
 }
 
 /// Skill registry — declarative skills loaded from json. No code execution.
@@ -362,6 +365,74 @@ mod tests {
         let (_g, home) = home();
         let err = write_note(&home, "../escape.txt", "x").unwrap_err();
         assert!(matches!(err, AppError::Permission(_)));
+    }
+
+    #[test]
+    fn writes_allow_all_destinations_and_recreate_missing_subdir() {
+        let (_g, home) = home();
+        std::fs::remove_dir(home.join("dreams")).unwrap();
+        let note = write_note(&home, "note.md", "note").unwrap();
+        let dream = write_dream(&home, "dream.md", "dream").unwrap();
+        let export = write_export(&home, "export.md", "export").unwrap();
+        for (path, content) in [(note, "note"), (dream, "dream"), (export, "export")] {
+            assert_eq!(std::fs::read_to_string(path).unwrap(), content);
+        }
+        let note = write_note(&home, "note.md", "new").unwrap();
+        assert_eq!(std::fs::read_to_string(note).unwrap(), "new");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn writes_reject_symlink_files_without_changing_outside_files() {
+        let (_g, home) = home();
+        let outside = TempDir::new().unwrap();
+        let secret = outside.path().join("secret.md");
+        std::fs::write(&secret, "unchanged").unwrap();
+        for subdir in ["notes", "dreams", "exports"] {
+            std::os::unix::fs::symlink(&secret, home.join(subdir).join("link.md")).unwrap();
+            assert!(write_in_subdir(&home, subdir, "link.md", "overwrite").is_err());
+            assert_eq!(std::fs::read_to_string(&secret).unwrap(), "unchanged");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn writes_reject_symlink_directories_without_changing_outside_files() {
+        let (_g, home) = home();
+        let outside = TempDir::new().unwrap();
+        let secret = outside.path().join("secret.md");
+        std::fs::write(&secret, "unchanged").unwrap();
+        for subdir in ["notes", "dreams", "exports"] {
+            std::fs::remove_dir(home.join(subdir)).unwrap();
+            std::os::unix::fs::symlink(outside.path(), home.join(subdir)).unwrap();
+            assert!(write_in_subdir(&home, subdir, "secret.md", "overwrite").is_err());
+            assert!(write_in_subdir(&home, subdir, "new.md", "new").is_err());
+            assert_eq!(std::fs::read_to_string(&secret).unwrap(), "unchanged");
+            assert!(!outside.path().join("new.md").exists());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inbox_rejects_symlink_directory_outside_home() {
+        let (_g, home) = home();
+        let outside = TempDir::new().unwrap();
+        std::fs::write(outside.path().join("secret.md"), "secret").unwrap();
+        std::fs::remove_dir(home.join("inbox")).unwrap();
+        std::os::unix::fs::symlink(outside.path(), home.join("inbox")).unwrap();
+        assert!(matches!(read_inbox_by_name(&home, "secret.md"), Err(AppError::Permission(_))));
+        assert!(matches!(list_inbox(&home), Err(AppError::Permission(_))));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn no_follow_read_rejects_symlink() {
+        let dir = TempDir::new().unwrap();
+        let target = dir.path().join("target.md");
+        let link = dir.path().join("link.md");
+        std::fs::write(&target, "secret").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert!(open_no_follow(&link).is_err());
     }
 
     #[test]

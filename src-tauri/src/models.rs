@@ -266,51 +266,22 @@ pub fn parse_timestamp(s: &str) -> Option<DateTime<Utc>> {
 /// enforce `local_only_mode` for the Ollama provider — outbound LLM calls go
 /// from Rust via reqwest and bypass the webview CSP, so we must validate here.
 ///
-/// The parser strips userinfo (`user:pass@`) before extracting the host so
-/// `http://127.0.0.1@evil.com` does NOT pass, and verifies IPv4 hosts via
-/// `Ipv4Addr::is_loopback()` so `http://127.0.0.1.evil.com` (a hostname that
-/// merely *starts* with "127.") also does NOT pass.
+/// Use reqwest's URL parser so userinfo, paths, queries, and fragments cannot
+/// change which host is classified. Only HTTP(S) endpoints are supported.
 pub fn endpoint_is_loopback(endpoint: &str) -> bool {
-    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-
-    let trimmed = endpoint.trim();
-    let after_scheme = trimmed
-        .split_once("://")
-        .map(|(_, rest)| rest)
-        .unwrap_or(trimmed);
-    // Strip everything from the first '/' (path/query/fragment).
-    let authority = after_scheme.split('/').next().unwrap_or("");
-    // Strip userinfo: only the part AFTER the last '@' is the real host.
-    let host_port = authority.rsplit_once('@').map(|(_, h)| h).unwrap_or(authority);
-
-    // IPv6 literals are wrapped in `[...]:port`; pull the inside.
-    let (host, _) = if let Some(rest) = host_port.strip_prefix('[') {
-        match rest.find(']') {
-            Some(idx) => (&rest[..idx], &rest[idx + 1..]),
-            None => return false,
-        }
-    } else {
-        // For non-bracketed forms, the LAST ':' separates port (if any).
-        match host_port.rsplit_once(':') {
-            Some((h, p)) if p.chars().all(|c| c.is_ascii_digit()) => (h, p),
-            _ => (host_port, ""),
-        }
+    let Ok(url) = reqwest::Url::parse(endpoint) else {
+        return false;
     };
-
-    let host_lower = host.to_ascii_lowercase();
-    if host_lower == "localhost" {
-        return true;
+    if !matches!(url.scheme(), "http" | "https") {
+        return false;
     }
-    if let Ok(v4) = host_lower.parse::<Ipv4Addr>() {
-        return v4.is_loopback();
+    if let Some(domain) = url.domain() {
+        return domain == "localhost";
     }
-    if let Ok(v6) = host_lower.parse::<Ipv6Addr>() {
-        return v6.is_loopback();
-    }
-    if let Ok(ip) = host_lower.parse::<IpAddr>() {
-        return ip.is_loopback();
-    }
-    false
+    url.host_str()
+        .and_then(|host| host.trim_matches(['[', ']']).parse::<std::net::IpAddr>().ok())
+        .map(|ip| ip.is_loopback())
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -357,6 +328,9 @@ mod model_tests {
         assert!(!endpoint_is_loopback("http://127.0.0.1@evil.com"));
         assert!(!endpoint_is_loopback("http://127.0.0.1@evil.com:11434"));
         assert!(!endpoint_is_loopback("http://localhost@evil.com"));
+        // '@' in a query or fragment is not userinfo.
+        assert!(!endpoint_is_loopback("http://example.com?@localhost"));
+        assert!(!endpoint_is_loopback("http://example.com#@localhost"));
         // hostname that merely *starts* with "127." but is not a real IP
         assert!(!endpoint_is_loopback("http://127.0.0.1.evil.com"));
         assert!(!endpoint_is_loopback("http://localhost.evil.com"));
@@ -364,5 +338,8 @@ mod model_tests {
         assert!(!endpoint_is_loopback(""));
         assert!(!endpoint_is_loopback("http://"));
         assert!(!endpoint_is_loopback("http://["));
+        assert!(!endpoint_is_loopback("ftp://localhost:11434"));
+        assert!(!endpoint_is_loopback("file://localhost/path"));
+        assert!(!endpoint_is_loopback("http://localhost:invalid"));
     }
 }

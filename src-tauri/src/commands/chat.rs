@@ -105,15 +105,10 @@ pub async fn send_message(state: State<'_, AppState>, message: String) -> AppRes
         .run(move |db| db.create_interaction(new_interaction))
         .await?;
 
-    let mut updated = pet.clone();
-    updated.last_interaction_at = Some(now_rfc3339());
-    updated.affection = (updated.affection + 1).min(100);
-    updated.boredom = (updated.boredom - 5).max(0);
-    if used_llm {
-        updated.last_llm_call_at = Some(now_rfc3339());
-    }
-    let to_save = updated.clone();
-    db.clone().run(move |db| db.save_pet_state(&to_save)).await?;
+    let updated = db.clone().run(move |db| {
+        db.record_chat_reply(&pet.id, &now_rfc3339(), used_llm)?;
+        load_or_init_pet_state(db)
+    }).await?;
 
     if used_llm && settings.memory_enabled {
         let prompt_input = format!("user: {}\npet: {}", trimmed, reply_text);
@@ -293,12 +288,12 @@ pub async fn autonomous_speak(
         }
     }
 
-    let mut updated = pet.clone();
-    if used_llm {
-        updated.last_llm_call_at = Some(now_rfc3339());
-        let to_save = updated.clone();
-        db.clone().run(move |db| db.save_pet_state(&to_save)).await?;
-    }
+    let updated = db.clone().run(move |db| {
+        if used_llm {
+            db.update_last_llm_call_at(&pet.id, &now_rfc3339())?;
+        }
+        load_or_init_pet_state(db)
+    }).await?;
 
     Ok(ChatReply {
         text,

@@ -237,6 +237,49 @@ impl Db {
         Ok(())
     }
 
+    /// Record autonomous speech without replacing care changes saved during the LLM call.
+    pub fn update_last_llm_call_at(&self, id: &str, at: &str) -> AppResult<()> {
+        let changed = self.conn.lock().execute(
+            "UPDATE pet_state SET last_llm_call_at = ?2, updated_at = ?3 WHERE id = ?1",
+            params![id, at, now_rfc3339()],
+        )?;
+        if changed == 0 {
+            return Err(AppError::NotFound(format!("pet state {id}")));
+        }
+        Ok(())
+    }
+
+    pub fn update_last_report_at(&self, id: &str, at: &str) -> AppResult<()> {
+        let conn = self.conn.lock();
+        let existing: Option<String> = conn.query_row(
+            "SELECT last_report_at FROM pet_state WHERE id = ?1",
+            params![id],
+            |row| row.get(0),
+        ).optional()?.ok_or_else(|| AppError::NotFound(format!("pet state {id}")))?;
+        // Preserve the existing monotonic report watermark under the same lock.
+        let merged = merge_last_report_at(existing, Some(at.to_string()));
+        conn.execute(
+            "UPDATE pet_state SET last_report_at = ?2, updated_at = ?3 WHERE id = ?1",
+            params![id, merged, now_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    /// Apply chat's deltas to the current row, never the pre-LLM snapshot.
+    pub fn record_chat_reply(&self, id: &str, at: &str, used_llm: bool) -> AppResult<()> {
+        let changed = self.conn.lock().execute(
+            "UPDATE pet_state SET affection = MIN(100, affection + 1),
+             boredom = MAX(0, boredom - 5), last_interaction_at = ?2,
+             last_llm_call_at = CASE WHEN ?3 THEN ?2 ELSE last_llm_call_at END,
+             updated_at = ?4 WHERE id = ?1",
+            params![id, at, used_llm, now_rfc3339()],
+        )?;
+        if changed == 0 {
+            return Err(AppError::NotFound(format!("pet state {id}")));
+        }
+        Ok(())
+    }
+
     pub fn load_pet_state(&self, id: &str) -> AppResult<Option<PetState>> {
         let conn = self.conn.lock();
         let res = conn
@@ -320,6 +363,17 @@ impl Db {
         )?;
         let iter = stmt.query_map(params![limit], map_memory)?;
         Ok(collect_tolerant(iter, "memories"))
+    }
+
+    /// Exports must include every row or fail explicitly on an unreadable row.
+    pub fn list_all_memories(&self) -> AppResult<Vec<Memory>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, type, content, importance, confidence, source_interaction_id, created_at, last_accessed_at, decay_score
+             FROM memories ORDER BY created_at DESC",
+        )?;
+        let iter = stmt.query_map([], map_memory)?;
+        Ok(iter.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
     /// Retrieve relevant memories blending FTS text relevance with recency and importance.
@@ -810,6 +864,85 @@ mod tests {
         assert_eq!(loaded.energy, 80);
     }
 
+    #[test]
+    fn llm_timestamp_update_preserves_current_pet() {
+        let db = fresh();
+        let mut pet = PetState::new("Mochi");
+        db.save_pet_state(&pet).unwrap();
+        // A feed/pat lands while the LLM is awaiting its response.
+        pet.hunger = 7;
+        pet.affection = 92;
+        pet.boredom = 12;
+        pet.last_report_at = Some("2026-10-28T01:00:00Z".into());
+        pet.updated_at = "2026-10-28T01:00:00Z".into();
+        db.save_pet_state(&pet).unwrap();
+
+        db.update_last_llm_call_at(&pet.id, "2026-10-28T02:00:00Z").unwrap();
+        let loaded = db.load_pet_state(&pet.id).unwrap().unwrap();
+        assert_ne!(loaded.updated_at, pet.updated_at);
+        pet.last_llm_call_at = Some("2026-10-28T02:00:00Z".into());
+        pet.updated_at = loaded.updated_at.clone();
+        assert_eq!(serde_json::to_value(loaded).unwrap(), serde_json::to_value(pet).unwrap());
+    }
+
+    #[test]
+    fn report_timestamp_update_preserves_current_pet_and_newer_report() {
+        let db = fresh();
+        let mut pet = PetState::new("Renamed Mochi");
+        pet.hunger = 7;
+        pet.affection = 92;
+        pet.last_llm_call_at = Some("2026-10-28T01:00:00Z".into());
+        pet.updated_at = "2026-10-28T01:00:00Z".into();
+        db.save_pet_state(&pet).unwrap();
+
+        db.update_last_report_at(&pet.id, "2026-10-28T03:00:00Z").unwrap();
+        // An earlier report finishing later must not roll back the watermark.
+        db.update_last_report_at(&pet.id, "2026-10-28T02:00:00Z").unwrap();
+        let loaded = db.load_pet_state(&pet.id).unwrap().unwrap();
+        assert_ne!(loaded.updated_at, pet.updated_at);
+        pet.last_report_at = Some("2026-10-28T03:00:00Z".into());
+        pet.updated_at = loaded.updated_at.clone();
+        assert_eq!(serde_json::to_value(loaded).unwrap(), serde_json::to_value(pet).unwrap());
+    }
+
+    #[test]
+    fn chat_reply_applies_deltas_to_current_pet() {
+        let db = fresh();
+        let mut pet = PetState::new("Renamed Mochi");
+        pet.hunger = 7;
+        pet.affection = 92;
+        pet.boredom = 12;
+        pet.last_report_at = Some("2026-10-28T01:00:00Z".into());
+        db.save_pet_state(&pet).unwrap();
+
+        db.record_chat_reply(&pet.id, "2026-10-28T02:00:00Z", true).unwrap();
+        let loaded = db.load_pet_state(&pet.id).unwrap().unwrap();
+        pet.affection += 1;
+        pet.boredom -= 5;
+        pet.last_interaction_at = Some("2026-10-28T02:00:00Z".into());
+        pet.last_llm_call_at = Some("2026-10-28T02:00:00Z".into());
+        pet.updated_at = loaded.updated_at.clone();
+        assert_eq!(serde_json::to_value(loaded).unwrap(), serde_json::to_value(&pet).unwrap());
+
+        pet.affection = 100;
+        pet.boredom = 2;
+        db.save_pet_state(&pet).unwrap();
+        db.record_chat_reply(&pet.id, "2026-10-28T03:00:00Z", false).unwrap();
+        let loaded = db.load_pet_state(&pet.id).unwrap().unwrap();
+        assert_eq!(loaded.affection, 100);
+        assert_eq!(loaded.boredom, 0);
+        assert_eq!(loaded.last_llm_call_at, pet.last_llm_call_at);
+        assert_eq!(loaded.last_interaction_at.as_deref(), Some("2026-10-28T03:00:00Z"));
+    }
+
+    #[test]
+    fn narrow_pet_updates_reject_missing_pet() {
+        let db = fresh();
+        assert!(matches!(db.update_last_llm_call_at("missing", "now"), Err(AppError::NotFound(_))));
+        assert!(matches!(db.update_last_report_at("missing", "now"), Err(AppError::NotFound(_))));
+        assert!(matches!(db.record_chat_reply("missing", "now", false), Err(AppError::NotFound(_))));
+    }
+
     /// REQ-102 — a debounced frontend save carrying a stale (older or null)
     /// `last_report_at` must never roll back the newer watermark written by
     /// `run_status_report`, possibly from another window.
@@ -1043,6 +1176,9 @@ mod tests {
         let rows = db.list_memories(10).expect("loader must not error on corrupt row");
         assert_eq!(rows.len(), 1, "exactly the good row should survive");
         assert_eq!(rows[0].content, "good row");
+
+        // An export must report the unreadable row instead of silently omitting it.
+        assert!(db.list_all_memories().is_err());
 
         // search_memories shares the same tolerance path (fallback LIKE branch
         // when FTS misses). The corrupt row was indexed by the FTS trigger, so
