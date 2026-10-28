@@ -131,7 +131,8 @@
    *  status and never alerts a second time. */
   function reportSave(res: Awaited<ReturnType<typeof saver.commit>>) {
     if (res.ok) status.show("saved ✓", 2_000);
-    else if (res.superseded) return; // a newer commit of the same field reports
+    // A newer edit/commit owns the field now; just drop this save's "saving…".
+    else if (res.superseded) status.show("");
     else if (res.keys.length > 0) status.show("not saved — see the field marked above", 5_000);
     else status.show(`error: ${res.error}`, 5_000);
   }
