@@ -572,7 +572,7 @@
           <span class="chip">Tauri 2</span>
           <span class="chip">Svelte 5</span>
           <span class="chip">Rust</span>
-          <span class="chip" data-i18n="hero.tests">292 tests</span>
+          <span class="chip" data-i18n="hero.tests">459 tests</span>
         </div>
         <div class="hero-cta">
           <a class="btn btn-primary" href="#quickstart">
@@ -653,7 +653,7 @@
 <span class="p">$</span> npm install
 <span class="p">$</span> npm run tauri:dev <span class="c"># launches the desktop pet</span></pre>
     </div>
-    <p class="req-note"><span data-i18n="qs.req1">Requirements: Node ≥ 20, Rust ≥ 1.77, Windows / macOS / Linux. Optional:</span> <a href="https://ollama.com/" target="_blank" rel="noopener">Ollama</a> <span data-i18n="qs.req2">with a small model for chat replies —</span> <code>ollama pull gemma4:e2b</code><span data-i18n="qs.req3">, then Settings → provider</span> <code>ollama</code>.</p>
+    <p class="req-note"><span data-i18n="qs.req1">Requirements: Node ≥ 20, Rust ≥ 1.89, Windows / macOS / Linux. Optional:</span> <a href="https://ollama.com/" target="_blank" rel="noopener">Ollama</a> <span data-i18n="qs.req2">with a small model for chat replies —</span> <code>ollama pull gemma4:e2b</code><span data-i18n="qs.req3">, then Settings → provider</span> <code>ollama</code>.</p>
   </section>
 
   <!-- ================= PROOF ================= -->
@@ -661,8 +661,8 @@
     <h2 id="hood-h" data-i18n="hood.h">Under the hood</h2>
     <p class="sub" data-i18n="hood.sub">Cute surface, rigorous underneath. The pet is a simulation first — the LLM is seasoning, not the meal.</p>
     <div class="stat-rule">
-      <div><div class="n">292</div><div class="l" data-i18n="hood.s1">tests passing</div></div>
-      <div><div class="n">113</div><div class="l" data-i18n="hood.s2">PRD requirements tracked</div></div>
+      <div><div class="n">459</div><div class="l" data-i18n="hood.s1">tests passing</div></div>
+      <div><div class="n">134</div><div class="l" data-i18n="hood.s2">PRD requirements tracked</div></div>
       <div><div class="n">3&nbsp;s</div><div class="l" data-i18n="hood.s3">simulation tick, fully offline</div></div>
       <div><div class="n">0</div><div class="l" data-i18n="hood.s4">network calls by default</div></div>
     </div>
@@ -747,12 +747,12 @@
     <h2 id="road-h" data-i18n="road.h">Coming next — clearly not shipped yet</h2>
     <ul class="roadmap">
       <li data-i18n="road.1">Voice (opt-in)</li>
-      <li data-i18n="road.2">Custom skins</li>
+      <li data-i18n="road.2">Custom sprite sets</li>
       <li data-i18n="road.3">Live2D / VRM</li>
       <li data-i18n="road.4">Git &amp; test-runner watcher</li>
       <li data-i18n="road.5">Local embedding memory search</li>
       <li data-i18n="road.6">Multiple pets</li>
-      <li data-i18n="road.7">Wardrobe &amp; growth stages</li>
+      <li data-i18n="road.7">Growth stages</li>
     </ul>
   </section>
 
@@ -796,7 +796,7 @@
     "nav.quickstart": "시작하기", "nav.hood": "내부 구조", "nav.poses": "포즈",
     "hero.h1": "데스크톱 위에 사는 로컬-퍼스트 AI 펫.",
     "hero.lede": "모치는 스스로 움직이고, 중요한 건 기억하고, 원할 때만 로컬 LLM으로 짧게 대화해요. 완전 오프라인. 계정 없음. 클라우드 없음. 추적 없음.",
-    "hero.tests": "292개 테스트",
+    "hero.tests": "459개 테스트",
     "hero.clone": "클론해서 실행", "hero.star": "GitHub 스타",
     "claim1.b": "LLM 없이도 살아 있어요.",
     "claim1.s": "결정론적 로컬 시뮬레이션이 기분·욕구·이동·수면을 구동해요 — 3초마다, 하루 종일, 네트워크 호출 없이.",
@@ -817,7 +817,7 @@
     "qs.h": "클론해서 만나보세요",
     "qs.sub": "아직 설치 파일은 없어요 — 클론해서 바로 실행하는 게 정직한 방법이에요. 모치는 무음 모드에서도 행복하고, 대화는 선택이에요.",
     "qs.term": "빠른 시작", "copy": "복사",
-    "qs.req1": "요구 사항: Node ≥ 20, Rust ≥ 1.77, Windows / macOS / Linux. 선택:", "qs.req2": "채팅을 원하면 가벼운 모델의", "qs.req3": ", 그다음 Settings → provider",
+    "qs.req1": "요구 사항: Node ≥ 20, Rust ≥ 1.89, Windows / macOS / Linux. 선택:", "qs.req2": "채팅을 원하면 가벼운 모델의", "qs.req3": ", 그다음 Settings → provider",
     "hood.h": "내부 구조",
     "hood.sub": "귀여운 표면, 그 아래는 단단한 엔지니어링. 펫은 시뮬레이션이 먼저 — LLM은 양념이지 요리가 아니에요.",
     "hood.s1": "테스트 통과", "hood.s2": "PRD 요구사항 추적", "hood.s3": "시뮬레이션 틱, 완전 오프라인", "hood.s4": "기본 네트워크 호출",
@@ -860,8 +860,8 @@
     "sb.r3": "셸 없음, eval 없음, 원격 스킬 로딩 없음 — 영원히.",
     "sb.r4": "모든 경로는 읽기/쓰기 전에 정규화되어 감옥 안인지 검증돼요.",
     "road.h": "다음 계획 — 아직 출시 전이에요",
-    "road.1": "음성 (옵트인)", "road.2": "커스텀 스킨", "road.3": "Live2D / VRM", "road.4": "Git & 테스트 러너 감시",
-    "road.5": "로컬 임베딩 기억 검색", "road.6": "여러 마리 펫", "road.7": "옷장 & 성장 단계",
+    "road.1": "음성 (옵트인)", "road.2": "커스텀 스프라이트 세트", "road.3": "Live2D / VRM", "road.4": "Git & 테스트 러너 감시",
+    "road.5": "로컬 임베딩 기억 검색", "road.6": "여러 마리 펫", "road.7": "성장 단계",
     "close.cite": "— 프로젝트 노스스타, PRD §1", "close.star": "하루가 좋아졌다면, 스타를 눌러 주세요",
     "foot.lic": "Pet Mochi — MIT 라이선스.", "foot.art": "28개 손그림 포즈 · 스프라이트는 이 프로젝트를 위해 직접 그렸어요.",
     "noscript": "실시간 펫 데모에는 JavaScript가 필요해요 — 나머지는 스크립트 없이도 잘 읽혀요."

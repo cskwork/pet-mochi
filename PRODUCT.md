@@ -52,7 +52,7 @@ chatbots wearing a mascot or cute shells with no memory.
 - Tamagotchi-style actions (Feed with snack tray + hidden favorite, Play,
   Pat, Rest, Report), welcome-back rituals, keepsakes, drag physics,
   pick-up dangles, themed stage cards (cream/blossom/mint/night).
-- 292 tests passing (213 frontend vitest + 79 backend cargo).
+- 459 tests passing (332 frontend vitest + 127 backend cargo).
 - MIT license. Repo: github.com/cskwork/pet-mochi.
 - Out of scope for MVP (do not advertise as shipped): voice, 3D/Live2D,
   cloud sync, marketplace. Roadmap only.
@@ -72,7 +72,7 @@ chatbots wearing a mascot or cute shells with no memory.
 
 - 27 real sprite PNGs in `public/sprites/` (idle, walk, jump, sit, sleep,
   eat variants, blush, hide, celebrate, peek, wiggle, dizzy, nuzzle, …).
-- Real stats from the repo: 292 tests, 113 PRD requirements tracked,
+- Real stats from the repo: 459 tests, 134 PRD requirements tracked,
   Tauri/Svelte/Rust stack, MIT license.
 - Architecture table and sandbox guarantees documented in README.md.
 - Absences future work must not fabricate: no testimonials, no user

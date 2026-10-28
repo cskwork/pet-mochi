@@ -1,4 +1,4 @@
-# Changelog — 2026-10-28 · "Lively Update" (bugs, performance, personality)
+# Changelog — 2026-10-28 · v0.3.0 "The Lively Update" (bugs, performance, personality)
 
 An audit (frontend, backend, and desktop-pet research) found that Mochi felt
 less alive mainly because of core-loop bugs, not missing features. This
@@ -71,10 +71,31 @@ personality setting real and adds art-free customization.
 - **`event_log` retention** — rows older than 30 days pruned at startup;
   conversations and memories are never auto-deleted.
 
+## Release hardening (browser QA + independent review)
+
+- **Settings saving** — every control saves the same way (checkbox/select on
+  change, text on blur, slider on release); each save sends only its own
+  field on top of the last saved settings, one at a time. A rejected value
+  (e.g. a remote endpoint in Local-only mode) reverts just that field with an
+  inline error instead of silently blocking every later save; per-field
+  versions keep a late failure from overwriting a newer edit.
+- **Resize** — changing size no longer throws Mochi into a corner; her feet
+  stay put while the window grows or shrinks.
+- **Keyboard & screen readers** — the right-click menu works from the
+  keyboard (ContextMenu / Shift+F10, arrows, Escape); snack-tray Escape
+  returns focus; the status chip and pet button carry the mood and name;
+  bond text meets 4.5:1 contrast; axe reports no serious issues.
+- **Start on login** — a custom pet home is passed as `--mochi-home` so a
+  login launch opens the same data; a failed save rolls back only a real OS
+  change; because auto-launch 0.5 escapes nothing, launch entries are
+  checked against a per-OS allow-list and refused with a clear message
+  instead of writing an entry that never starts.
+
 ## Verification
 
-`npm test` 304 passed (was 255) · `npm run check` 0/0 ·
-`cargo +1.95.0 test --lib` 102 passed (was 79) · `cargo build` OK ·
-smoke-tested in `tauri dev` with an isolated `MOCHI_HOME`.
+`npm test` 332 passed (was 255) · `npm run check` 0/0 ·
+`cargo +1.95.0 test --lib` 127 passed (was 79) · `cargo build` OK ·
+browser QA (mocked IPC, headless Chrome) 3 rounds, all P0–P2 closed ·
+smoke-tested in `tauri dev` with an isolated `MOCHI_HOME` (macOS).
 
 BACKLOG #23–#25 are resolved.
