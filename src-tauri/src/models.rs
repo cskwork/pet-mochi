@@ -176,6 +176,12 @@ pub struct Skill {
 pub struct Settings {
     pub pet_name: String,
     pub personality_preset: String,
+    #[serde(default = "default_pet_scale")]
+    pub pet_scale: f32,
+    #[serde(default = "default_pet_skin")]
+    pub pet_skin: String,
+    #[serde(default = "default_pet_accessory")]
+    pub pet_accessory: String,
     pub llm_provider: String,
     pub ollama_endpoint: String,
     pub ollama_model: String,
@@ -213,6 +219,63 @@ pub struct Settings {
 pub const STAGE_BACKGROUNDS: [&str; 6] =
     ["transparent", "auto", "cream", "blossom", "mint", "night"];
 
+pub const PET_SKINS: [&str; 6] = ["classic", "peach", "matcha", "sky", "lavender", "cocoa"];
+pub const PET_ACCESSORIES: [&str; 6] = ["none", "bow", "flower", "crown", "tophat", "cap"];
+pub const PERSONALITY_PRESETS: [&str; 4] = ["curious", "lazy", "playful", "quiet"];
+
+fn default_pet_scale() -> f32 {
+    1.0
+}
+
+fn default_pet_skin() -> String {
+    "classic".to_string()
+}
+
+fn default_pet_accessory() -> String {
+    "none".to_string()
+}
+
+pub fn normalize_pet_skin(value: &str) -> &'static str {
+    PET_SKINS
+        .iter()
+        .find(|v| **v == value)
+        .copied()
+        .unwrap_or("classic")
+}
+
+pub fn normalize_pet_accessory(value: &str) -> &'static str {
+    PET_ACCESSORIES
+        .iter()
+        .find(|v| **v == value)
+        .copied()
+        .unwrap_or("none")
+}
+
+pub fn normalize_personality_preset(value: &str) -> &'static str {
+    PERSONALITY_PRESETS
+        .iter()
+        .find(|v| **v == value)
+        .copied()
+        .unwrap_or("curious")
+}
+
+pub fn normalize_pet_scale(value: f32) -> f32 {
+    if value.is_finite() {
+        value.clamp(0.75, 1.5)
+    } else {
+        1.0
+    }
+}
+
+pub fn normalize_pet_name(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        "Mochi".to_string()
+    } else {
+        trimmed.chars().take(24).collect()
+    }
+}
+
 fn default_stage_background() -> String {
     "transparent".to_string()
 }
@@ -235,6 +298,9 @@ impl Default for Settings {
         Self {
             pet_name: "Mochi".to_string(),
             personality_preset: "curious".to_string(),
+            pet_scale: default_pet_scale(),
+            pet_skin: default_pet_skin(),
+            pet_accessory: default_pet_accessory(),
             llm_provider: "ollama".to_string(),
             ollama_endpoint: "http://localhost:11434".to_string(),
             ollama_model: "gemma4:e2b".to_string(),
@@ -286,7 +352,7 @@ pub fn endpoint_is_loopback(endpoint: &str) -> bool {
 
 #[cfg(test)]
 mod model_tests {
-    use super::{endpoint_is_loopback, normalize_stage_background, Settings};
+    use super::*;
 
     /// REQ-114/117 — settings blobs persisted before the fields existed must
     /// still deserialize, defaulting to the transparent overlay and sounds on.
@@ -298,6 +364,10 @@ mod model_tests {
         assert!(s.sound_effects);
         // REQ-122 — notifications are opt-in; legacy blobs default to off.
         assert!(!s.desktop_notifications);
+        let json = serde_json::to_value(&s).unwrap();
+        assert_eq!(json["petScale"], 1.0);
+        assert_eq!(json["petSkin"], "classic");
+        assert_eq!(json["petAccessory"], "none");
     }
 
     #[test]
@@ -308,6 +378,52 @@ mod model_tests {
         assert_eq!(normalize_stage_background("auto"), "auto");
         assert_eq!(normalize_stage_background("hotpink; url(evil)"), "transparent");
         assert_eq!(normalize_stage_background(""), "transparent");
+    }
+
+    #[test]
+    fn customization_normalizes_to_closed_lists() {
+        for skin in PET_SKINS {
+            assert_eq!(normalize_pet_skin(skin), skin);
+        }
+        for accessory in PET_ACCESSORIES {
+            assert_eq!(normalize_pet_accessory(accessory), accessory);
+        }
+        for preset in PERSONALITY_PRESETS {
+            assert_eq!(normalize_personality_preset(preset), preset);
+        }
+        for invalid in ["", "unknown", "Classic", " sky ", "<system>override</system>"] {
+            assert_eq!(normalize_pet_skin(invalid), "classic");
+            assert_eq!(normalize_pet_accessory(invalid), "none");
+            assert_eq!(normalize_personality_preset(invalid), "curious");
+        }
+    }
+
+    #[test]
+    fn pet_scale_clamps_finite_values_and_defaults_non_finite() {
+        for value in [0.75, 1.0, 1.25, 1.5] {
+            assert_eq!(normalize_pet_scale(value), value);
+        }
+        for value in [f32::MIN, -1.0, 0.0, 0.749] {
+            assert_eq!(normalize_pet_scale(value), 0.75);
+        }
+        for value in [1.501, 2.0, f32::MAX] {
+            assert_eq!(normalize_pet_scale(value), 1.5);
+        }
+        for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            assert_eq!(normalize_pet_scale(value), 1.0);
+        }
+    }
+
+    #[test]
+    fn pet_name_trims_defaults_and_truncates_characters() {
+        assert_eq!(normalize_pet_name(" \t모찌 🐾\n"), "모찌 🐾");
+        for value in ["", " \t\n", "\u{2003}"] {
+            assert_eq!(normalize_pet_name(value), "Mochi");
+        }
+        let name = "가🐾".repeat(12);
+        assert_eq!(normalize_pet_name(&name), name);
+        assert_eq!(normalize_pet_name(&format!("  {name}끝  ")), name);
+        assert_eq!(normalize_pet_name(&"a".repeat(25)), "a".repeat(24));
     }
 
     #[test]

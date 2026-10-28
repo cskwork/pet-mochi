@@ -5,7 +5,9 @@ use crate::error::{AppError, AppResult};
 use crate::llm::ollama::OllamaProvider;
 use crate::llm::provider::LlmProvider;
 use crate::models::{
-    endpoint_is_loopback, normalize_stage_background, now_rfc3339, PetState, Settings,
+    endpoint_is_loopback, normalize_pet_accessory, normalize_pet_name, normalize_pet_scale,
+    normalize_pet_skin, normalize_personality_preset, normalize_stage_background, now_rfc3339,
+    PetState, Settings,
 };
 use crate::sandbox::{builtin_skills, SkillManifest};
 use crate::state::AppState;
@@ -77,6 +79,10 @@ pub fn get_settings(state: State<'_, AppState>) -> AppResult<Settings> {
 
 #[tauri::command]
 pub fn save_settings(state: State<'_, AppState>, settings: Settings) -> AppResult<Settings> {
+    save_settings_inner(&state, settings)
+}
+
+fn save_settings_inner(state: &AppState, settings: Settings) -> AppResult<Settings> {
     if settings.local_only_mode
         && settings.llm_provider == "ollama"
         && !endpoint_is_loopback(&settings.ollama_endpoint)
@@ -92,8 +98,14 @@ pub fn save_settings(state: State<'_, AppState>, settings: Settings) -> AppResul
     // can never reach the frontend's data attribute.
     to_persist.stage_background =
         normalize_stage_background(&to_persist.stage_background).to_string();
+    to_persist.pet_scale = normalize_pet_scale(to_persist.pet_scale);
+    to_persist.pet_skin = normalize_pet_skin(&to_persist.pet_skin).to_string();
+    to_persist.pet_accessory = normalize_pet_accessory(&to_persist.pet_accessory).to_string();
+    to_persist.personality_preset =
+        normalize_personality_preset(&to_persist.personality_preset).to_string();
+    to_persist.pet_name = normalize_pet_name(&to_persist.pet_name);
     let json = serde_json::to_string(&to_persist)?;
-    state.db.put_setting(SETTINGS_KEY, &json)?;
+    state.db.put_settings_and_rename_pet(SETTINGS_KEY, &json, PET_STATE_ID, &to_persist.pet_name)?;
 
     // Re-bind the LLM provider so the new endpoint/model takes effect immediately
     // and so toggling provider to "none" clears the slot.
@@ -152,4 +164,115 @@ pub(crate) fn load_settings_raw(db: &Db) -> AppResult<Settings> {
 #[tauri::command]
 pub fn list_skills(_state: State<'_, AppState>) -> AppResult<Vec<SkillManifest>> {
     Ok(builtin_skills())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn app_state() -> AppState {
+        AppState::new(Arc::new(Db::open_in_memory().unwrap()), std::path::PathBuf::new())
+    }
+
+    #[test]
+    fn settings_save_echoes_and_persists_normalized_customization() {
+        let state = app_state();
+        let mut settings = Settings::default();
+        settings.llm_provider = "none".into();
+        settings.pet_name = format!("  {}extra  ", "가🐾".repeat(12));
+        settings.pet_scale = f32::NAN;
+        settings.pet_skin = "unknown".into();
+        settings.pet_accessory = "unknown".into();
+        settings.personality_preset = "unknown".into();
+        settings.stage_background = "unknown".into();
+        settings.cloud_api_key_set = true;
+
+        let echoed = save_settings_inner(&state, settings).unwrap();
+        assert_eq!(echoed.pet_name, "가🐾".repeat(12));
+        assert_eq!(echoed.pet_scale, 1.0);
+        assert_eq!(echoed.pet_skin, "classic");
+        assert_eq!(echoed.pet_accessory, "none");
+        assert_eq!(echoed.personality_preset, "curious");
+        assert_eq!(echoed.stage_background, "transparent");
+        assert!(!echoed.cloud_api_key_set);
+        let persisted = load_settings_raw(&state.db).unwrap();
+        assert_eq!(serde_json::to_value(&persisted).unwrap(), serde_json::to_value(&echoed).unwrap());
+        // Saving from Settings before the first pet load must still work.
+        assert!(state.db.load_pet_state(PET_STATE_ID).unwrap().is_none());
+        assert_eq!(load_or_init_pet_state(&state.db).unwrap().name, echoed.pet_name);
+    }
+
+    #[test]
+    fn settings_save_preserves_valid_customization_and_clamps_scale() {
+        let state = app_state();
+        let mut settings = Settings::default();
+        settings.llm_provider = "none".into();
+        settings.pet_name = " \tPeach\n".into();
+        settings.pet_skin = "peach".into();
+        settings.pet_accessory = "bow".into();
+        settings.personality_preset = "quiet".into();
+        for (value, expected) in [(0.1, 0.75), (2.0, 1.5), (1.25, 1.25), (f32::INFINITY, 1.0)] {
+            settings.pet_scale = value;
+            let echoed = save_settings_inner(&state, settings.clone()).unwrap();
+            assert_eq!(echoed.pet_name, "Peach");
+            assert_eq!(echoed.pet_skin, "peach");
+            assert_eq!(echoed.pet_accessory, "bow");
+            assert_eq!(echoed.personality_preset, "quiet");
+            assert_eq!(echoed.pet_scale, expected);
+            assert_eq!(load_settings_raw(&state.db).unwrap().pet_scale, expected);
+        }
+        settings.pet_name = " \t\n".into();
+        assert_eq!(save_settings_inner(&state, settings).unwrap().pet_name, "Mochi");
+    }
+
+    #[test]
+    fn settings_rename_changes_only_live_name_and_updated_at() {
+        let state = app_state();
+        let mut pet = PetState::new("Old name");
+        pet.mood = "curious".into();
+        pet.hunger = 17;
+        pet.energy = 42;
+        pet.affection = 93;
+        pet.current_animation = Some("peek".into());
+        pet.last_interaction_at = Some("2026-10-28T01:00:00Z".into());
+        pet.last_llm_call_at = Some("2026-10-28T02:00:00Z".into());
+        pet.last_report_at = Some("2026-10-28T03:00:00Z".into());
+        pet.updated_at = "2026-10-28T00:00:00Z".into();
+        state.db.save_pet_state(&pet).unwrap();
+        let mut other = PetState::new("Other pet");
+        other.id = "other".into();
+        state.db.save_pet_state(&other).unwrap();
+
+        let mut settings = Settings::default();
+        settings.llm_provider = "none".into();
+        settings.pet_name = "  New name  ".into();
+        let echoed = save_settings_inner(&state, settings).unwrap();
+        let renamed = state.db.load_pet_state(&pet.id).unwrap().unwrap();
+        assert_eq!(renamed.name, "New name");
+        assert_eq!(renamed.name, echoed.pet_name);
+        assert_ne!(renamed.updated_at, pet.updated_at);
+        let mut before = serde_json::to_value(&pet).unwrap();
+        before["name"] = renamed.name.clone().into();
+        before["updatedAt"] = renamed.updated_at.clone().into();
+        assert_eq!(serde_json::to_value(renamed).unwrap(), before);
+        assert_eq!(
+            serde_json::to_value(state.db.load_pet_state(&other.id).unwrap().unwrap()).unwrap(),
+            serde_json::to_value(other).unwrap(),
+        );
+    }
+
+    #[test]
+    fn invalid_endpoint_does_not_save_settings_or_rename_pet() {
+        let state = app_state();
+        let pet = load_or_init_pet_state(&state.db).unwrap();
+        let mut settings = Settings::default();
+        settings.pet_name = "Should not save".into();
+        settings.ollama_endpoint = "http://example.com".into();
+        assert!(matches!(save_settings_inner(&state, settings), Err(AppError::InvalidInput(_))));
+        assert!(state.db.get_setting(SETTINGS_KEY).unwrap().is_none());
+        assert_eq!(
+            serde_json::to_value(state.db.load_pet_state(&pet.id).unwrap().unwrap()).unwrap(),
+            serde_json::to_value(pet).unwrap(),
+        );
+    }
 }

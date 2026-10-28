@@ -44,6 +44,7 @@ fn load_report_memories(db: &Db, limit: i64) -> AppResult<Vec<crate::models::Mem
 #[tauri::command]
 pub async fn run_daily_reflection(state: State<'_, AppState>) -> AppResult<DailyReflection> {
     let db = state.db.clone();
+    let settings = db.clone().run(|db| load_settings_raw(db)).await?;
     let llm_slot = state.llm.clone();
     let cooldown = state.cooldown.clone();
     let home = state.pet_home.clone();
@@ -88,7 +89,8 @@ pub async fn run_daily_reflection(state: State<'_, AppState>) -> AppResult<Daily
     let provider_opt = llm_slot.read().clone();
     if let Some(provider) = provider_opt {
         if cooldown.try_acquire("llm_reflection", Duration::from_secs(60)) {
-            let (system, prompt) = reflection_prompt(&events_text, &memories);
+            let (system, prompt) =
+                reflection_prompt(&events_text, &memories, &settings.personality_preset);
             match provider
                 .complete(LlmRequest {
                     system: Some(system),
@@ -174,6 +176,7 @@ fn format_interaction_line(ix: &Interaction) -> String {
 #[tauri::command]
 pub async fn run_status_report(state: State<'_, AppState>) -> AppResult<StatusReport> {
     let db = state.db.clone();
+    let settings = db.clone().run(|db| load_settings_raw(db)).await?;
     let llm_slot = state.llm.clone();
     let cooldown = state.cooldown.clone();
     let home = state.pet_home.clone();
@@ -221,7 +224,14 @@ pub async fn run_status_report(state: State<'_, AppState>) -> AppResult<StatusRe
 
     // Try LLM, fall back deterministically. Cooldown key is dedicated so the
     // chat-reply cooldown doesn't interact with reports.
-    let validated = run_status_report_llm_or_fallback(&pet, &summary, &llm_slot, &cooldown).await;
+    let validated = run_status_report_llm_or_fallback(
+        &pet,
+        &summary,
+        &llm_slot,
+        &cooldown,
+        &settings.personality_preset,
+    )
+    .await;
 
     // File path: dreams/YYYY-MM-DD-HHMM.md (filesystem-safe, sortable).
     let file_name = report_filename(&window_end_iso);
@@ -270,11 +280,12 @@ async fn run_status_report_llm_or_fallback(
     summary: &crate::llm::report::WindowSummary,
     llm_slot: &Arc<RwLock<Option<Arc<dyn LlmProvider>>>>,
     cooldown: &Arc<CooldownManager>,
+    personality_preset: &str,
 ) -> ValidatedStatusReport {
     let provider_opt = llm_slot.read().clone();
     if let Some(provider) = provider_opt {
         if cooldown.try_acquire("llm_status_report", Duration::from_secs(60)) {
-            let (system, prompt) = status_report_prompt(summary);
+            let (system, prompt) = status_report_prompt(summary, personality_preset);
             match provider
                 .complete(LlmRequest {
                     system: Some(system),
@@ -349,6 +360,7 @@ pub async fn choose_choreography(
     let llm_slot = state.llm.clone();
     let cooldown = state.cooldown.clone();
     let db = state.db.clone();
+    let settings = db.clone().run(|db| load_settings_raw(db)).await?;
 
     let pet = db.clone().run(|db| Ok(load_or_init_pet_state(db)?)).await?;
 
@@ -364,7 +376,8 @@ pub async fn choose_choreography(
         return Err(AppError::Internal("autonomous LLM cooldown active".into()));
     }
 
-    let (system, prompt) = choreography_prompt(&pet, &event_type);
+    let (system, prompt) =
+        choreography_prompt(&pet, &event_type, &settings.personality_preset);
     let response = provider
         .complete(LlmRequest {
             system: Some(system),
@@ -414,6 +427,7 @@ pub async fn generate_interaction_report(
     state: State<'_, AppState>,
 ) -> AppResult<InteractionReport> {
     let db = state.db.clone();
+    let settings = db.clone().run(|db| load_settings_raw(db)).await?;
     let llm_slot = state.llm.clone();
     let cooldown = state.cooldown.clone();
     let home = state.pet_home.clone();
@@ -430,7 +444,8 @@ pub async fn generate_interaction_report(
     let provider_opt = llm_slot.read().clone();
     if let Some(provider) = provider_opt {
         if cooldown.try_acquire("llm_report", Duration::from_secs(30)) {
-            let (system, prompt) = interaction_report_prompt(&pet, &compressed);
+            let (system, prompt) =
+                interaction_report_prompt(&pet, &compressed, &settings.personality_preset);
             match provider
                 .complete(LlmRequest {
                     system: Some(system),

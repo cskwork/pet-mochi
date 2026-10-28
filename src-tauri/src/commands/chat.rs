@@ -73,7 +73,8 @@ pub async fn send_message(state: State<'_, AppState>, message: String) -> AppRes
 
     let provider_opt = llm_slot.read().clone();
     if let Some(provider) = provider_opt {
-        let (system, prompt) = pet_reply_prompt(&pet, &memories, &trimmed);
+        let (system, prompt) =
+            pet_reply_prompt(&pet, &memories, &trimmed, &settings.personality_preset);
         let req = LlmRequest {
             system: Some(system),
             prompt,
@@ -267,7 +268,8 @@ pub async fn autonomous_speak(
     let mut model = None;
 
     if let Some(provider) = provider_opt {
-        let (system, prompt) = pet_reply_prompt(&pet, &[], &prompt_seed);
+        let (system, prompt) =
+            pet_reply_prompt(&pet, &[], &prompt_seed, &settings.personality_preset);
         match provider
             .complete(LlmRequest {
                 system: Some(system),

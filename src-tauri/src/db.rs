@@ -698,6 +698,31 @@ impl Db {
         Ok(())
     }
 
+    /// Keep the saved name and live name consistent without replacing care state.
+    pub fn put_settings_and_rename_pet(
+        &self,
+        key: &str,
+        value: &str,
+        pet_id: &str,
+        pet_name: &str,
+    ) -> AppResult<()> {
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+        let now = now_rfc3339();
+        tx.execute(
+            "INSERT INTO settings (key, value, updated_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+            params![key, value, now],
+        )?;
+        // No row is fine before the pet's first load: initialization uses settings.
+        tx.execute(
+            "UPDATE pet_state SET name = ?2, updated_at = ?3 WHERE id = ?1",
+            params![pet_id, pet_name, now],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn delete_setting(&self, key: &str) -> AppResult<()> {
         let conn = self.conn.lock();
         conn.execute("DELETE FROM settings WHERE key = ?1", params![key])?;
@@ -1124,6 +1149,27 @@ mod tests {
         assert_eq!(db.get_setting("foo").unwrap(), Some("bar".to_string()));
         db.put_setting("foo", "baz").unwrap();
         assert_eq!(db.get_setting("foo").unwrap(), Some("baz".to_string()));
+    }
+
+    #[test]
+    fn settings_rename_failure_rolls_back_settings_and_pet() {
+        let db = fresh();
+        let pet = PetState::new("Mochi");
+        db.save_pet_state(&pet).unwrap();
+        db.put_setting("settings:v1", "old settings").unwrap();
+        db.conn.lock().execute_batch(
+            "CREATE TRIGGER reject_rename BEFORE UPDATE OF name ON pet_state
+             BEGIN SELECT RAISE(ABORT, 'rename rejected'); END;",
+        ).unwrap();
+
+        assert!(db.put_settings_and_rename_pet(
+            "settings:v1", "new settings", &pet.id, "Peach",
+        ).is_err());
+        assert_eq!(db.get_setting("settings:v1").unwrap().as_deref(), Some("old settings"));
+        assert_eq!(
+            serde_json::to_value(db.load_pet_state(&pet.id).unwrap().unwrap()).unwrap(),
+            serde_json::to_value(pet).unwrap(),
+        );
     }
 
     #[test]
