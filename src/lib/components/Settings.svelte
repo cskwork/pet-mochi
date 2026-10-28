@@ -99,19 +99,34 @@
     };
   });
 
-  async function save() {
-    if (!settings) return;
+  /** Save and broadcast; resolves false (message already shown) on failure. */
+  async function save(): Promise<boolean> {
+    if (!settings) return false;
     savingMessage = "saving…";
+    let ok = false;
     try {
       settings = await api.saveSettings(settings);
       savingMessage = "saved ✓";
+      ok = true;
       // REQ-113 — broadcast so the pet overlay picks up e.g. animation
       // intensity without a restart. Best-effort.
       void emit("settings:changed", settings).catch(() => undefined);
     } catch (e) {
-      savingMessage = `error: ${(e as Error).message}`;
+      // Tauri rejects with the backend's message string, not an Error.
+      savingMessage = `error: ${(e as Error)?.message ?? String(e)}`;
     }
-    setTimeout(() => (savingMessage = ""), 2_000);
+    setTimeout(() => (savingMessage = ""), ok ? 2_000 : 5_000);
+    return ok;
+  }
+
+  /** The backend registers/unregisters a real login item on save; if that
+   *  fails, show its message and put the checkbox back. */
+  async function onStartOnLoginChange() {
+    if (!settings) return;
+    const wanted = settings.startOnLogin;
+    if (!(await save()) && settings) {
+      settings = { ...settings, startOnLogin: !wanted };
+    }
   }
 
   async function saveApiKey() {
@@ -430,7 +445,11 @@
           Always on top
         </label>
         <label class="row">
-          <input type="checkbox" bind:checked={settings.startOnLogin} />
+          <input
+            type="checkbox"
+            bind:checked={settings.startOnLogin}
+            onchange={onStartOnLoginChange}
+          />
           Start on login
         </label>
         <label>
@@ -459,7 +478,17 @@
         </label>
         <label>
           Pet home folder
-          <input bind:value={settings.petHomePath} placeholder="(default user data dir)" />
+          <!-- Read-only: the backend reports the real path and ignores writes. -->
+          <input
+            class="readonly-path"
+            readonly
+            value={settings.petHomePath ?? ""}
+            aria-describedby="pet-home-hint"
+          />
+          <span class="hint" id="pet-home-hint">
+            To move this folder, set the <code>MOCHI_HOME</code> environment
+            variable before launching Mochi.
+          </span>
         </label>
         <label class="row">
           <input type="checkbox" bind:checked={settings.developerEventLog} />
@@ -733,6 +762,13 @@
   .hint {
     font-size: 12px;
     color: #6a5a6a;
+  }
+  .readonly-path {
+    background: #f6eef1;
+    color: #4a3a4a;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    user-select: text;
   }
   .group-label {
     font-size: 12px;

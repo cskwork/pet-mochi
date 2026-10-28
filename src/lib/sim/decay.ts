@@ -1,6 +1,13 @@
 import { DEFAULT_PERSONALITY, type PersonalityParams } from "./personality";
 import { clamp, type PetState } from "./state";
 
+/** Awake hunger gain per second (was 0.10 — hungry 6 min after a feed). */
+export const HUNGER_PER_SEC = 0.019;
+/** Awake energy drain per second (was 0.08 — tired 8 min after waking). */
+export const ENERGY_DRAIN_PER_SEC = 0.011;
+/** Awake boredom gain per second (was 0.10 — bored 5 min after a play). */
+export const BOREDOM_PER_SEC = 0.032;
+
 /**
  * Decay/recover a pet's hidden stats by the elapsed time. Pure function — returns
  * a new state. Decay rates are tuned for ~1-tick-per-3-seconds simulation; deltas
@@ -13,17 +20,23 @@ export function applyDecay(
 ): PetState {
   if (elapsedSeconds <= 0) return state;
 
-  // Per-second deltas. Tuned for tamagotchi-feel visibility — bars should
-  // drift noticeably within a minute or two so the user actually sees the
-  // pet's needs change, not have to wait 25 minutes for one bar to move.
-  const dHunger = 0.10 * elapsedSeconds;
+  // Per-second deltas, "medium" needs pacing (BACKLOG #25). Each need is
+  // timed from the moment the user answers it — i.e. the action taken right
+  // when the mood flips:
+  //   hungry  (hunger > 75):  fed at 76 → 41; (75 − 41) / HUNGER_PER_SEC ≈ 30 min
+  //   tired   (energy < 20):  wakes at WAKE_ENERGY 60; 40 / ENERGY_DRAIN ≈ 60 min
+  //   bored   (boredom > 70): played at 71 → 41; 29 / BOREDOM_PER_SEC ≈ 15 min
+  // Sleep recovery (+0.5/s) is unchanged. Personality multipliers scale these.
+  const dHunger = HUNGER_PER_SEC * elapsedSeconds;
   const asleep = state.currentAnimation === "sleep";
   const dEnergy = asleep
     ? +0.5 * elapsedSeconds
-    : -0.08 * personality.energyDrainScale * elapsedSeconds;
+    : -ENERGY_DRAIN_PER_SEC * personality.energyDrainScale * elapsedSeconds;
   // Boredom is frozen while asleep — otherwise it climbs past the night-sleep
   // gate (boredom < 60) and breaks her sleep from the inside.
-  const dBoredom = asleep ? 0 : 0.10 * personality.boredomGainScale * elapsedSeconds;
+  const dBoredom = asleep
+    ? 0
+    : BOREDOM_PER_SEC * personality.boredomGainScale * elapsedSeconds;
   // Curiosity drifts toward a low baseline so the "?" mark eventually clears
   // when nothing novel happens. Above 60 it gently fades; below it slowly
   // builds back up — without this, curiosity ratchets upward forever and

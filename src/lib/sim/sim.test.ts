@@ -10,6 +10,7 @@ import {
   roundStats,
   runTick,
   applyAction,
+  HUNGER_PER_SEC,
   WAKE_ENERGY,
   MAX_TICK_ELAPSED_SECONDS,
   type PetState,
@@ -139,13 +140,12 @@ describe("applyDecay", () => {
     expect(out.energy).toBeLessThan(s.energy);
   });
 
-  // Tamagotchi-feel rates: stat changes must be noticeable in the status bars
-  // within a minute or two. Rates below are calibrated so the user actually
-  // sees the gauges drift, instead of having to wait 25+ minutes.
-  it("drains energy by at least 4 points per minute while awake", () => {
+  // "Medium" needs pacing (BACKLOG #25): bars still move every minute, but
+  // a need takes 15–60 minutes to become a mood (see the pacing tests below).
+  it("drains energy by about 0.66 points per minute while awake", () => {
     const s = { ...newPetState(), energy: 80 };
     const out = applyDecay(s, 60);
-    expect(s.energy - out.energy).toBeGreaterThanOrEqual(4);
+    expect(s.energy - out.energy).toBeCloseTo(0.66, 5);
   });
 
   it("recovers energy by at least 25 points per minute while sleeping", () => {
@@ -154,16 +154,16 @@ describe("applyDecay", () => {
     expect(out.energy - s.energy).toBeGreaterThanOrEqual(25);
   });
 
-  it("raises hunger by at least 4 points per minute", () => {
+  it("raises hunger by about 1.14 points per minute", () => {
     const s = { ...newPetState(), hunger: 30 };
     const out = applyDecay(s, 60);
-    expect(out.hunger - s.hunger).toBeGreaterThanOrEqual(4);
+    expect(out.hunger - s.hunger).toBeCloseTo(1.14, 5);
   });
 
-  it("raises boredom by at least 4 points per minute", () => {
+  it("raises boredom by about 1.92 points per minute", () => {
     const s = { ...newPetState(), boredom: 20 };
     const out = applyDecay(s, 60);
-    expect(out.boredom - s.boredom).toBeGreaterThanOrEqual(4);
+    expect(out.boredom - s.boredom).toBeCloseTo(1.92, 5);
   });
 
   it("recovers stress slowly when no negative pressure", () => {
@@ -520,7 +520,7 @@ describe("runTick elapsed cap", () => {
 
   it("short ticks are unaffected", () => {
     const s = { ...newPetState(), hunger: 30 };
-    expect(runTick(s, ctx, 3).hunger).toBeCloseTo(30.3, 5);
+    expect(runTick(s, ctx, 3).hunger).toBeCloseTo(30 + 3 * HUNGER_PER_SEC, 5);
   });
 });
 
@@ -536,5 +536,51 @@ describe("salience scoring is cooldown-free", () => {
     // Cooldown still fresh → the real gate passes once.
     expect(shouldCallLLM(ev, s)).toBe(true);
     expect(shouldCallLLM(ev, s)).toBe(false);
+  });
+});
+
+// Medium needs pacing (BACKLOG #25): simulate 3s ticks from the post-action
+// start point and time the mood flip; each must land within ±15% of target.
+describe("needs pacing (medium)", () => {
+  const TICK_S = 3;
+  function minutesUntil(start: PetState, mood: PetState["mood"]): number {
+    let s = start;
+    for (let t = TICK_S; t <= 4 * 3600; t += TICK_S) {
+      s = runTick(s, ctx, TICK_S);
+      if (s.mood === mood) return t / 60;
+    }
+    return Infinity;
+  }
+  // Calm baseline: recent interaction (no loneliness drift), other needs low.
+  const base = (): PetState => ({
+    ...newPetState(),
+    lastInteractionAt: new Date().toISOString(),
+    hunger: 0,
+    energy: 100,
+    boredom: 0,
+    curiosity: 40,
+    affection: 80,
+  });
+
+  it("hungry ~30 min after a feed at the moment she turned hungry (76 → 41)", () => {
+    const fed = applyAction({ ...base(), hunger: 76 }, "feed").state;
+    expect(fed.hunger).toBe(41);
+    const m = minutesUntil({ ...fed, currentAnimation: "idle" }, "hungry");
+    expect(m).toBeGreaterThanOrEqual(30 * 0.85);
+    expect(m).toBeLessThanOrEqual(30 * 1.15);
+  });
+
+  it("tired ~60 min after waking at WAKE_ENERGY (60)", () => {
+    const m = minutesUntil({ ...base(), energy: WAKE_ENERGY }, "tired");
+    expect(m).toBeGreaterThanOrEqual(60 * 0.85);
+    expect(m).toBeLessThanOrEqual(60 * 1.15);
+  });
+
+  it("bored ~15 min after a play at the moment she turned bored (71 → 41)", () => {
+    const played = applyAction({ ...base(), boredom: 71 }, "play", () => 0).state;
+    expect(played.boredom).toBe(41);
+    const m = minutesUntil({ ...played, currentAnimation: "idle" }, "bored");
+    expect(m).toBeGreaterThanOrEqual(15 * 0.85);
+    expect(m).toBeLessThanOrEqual(15 * 1.15);
   });
 });

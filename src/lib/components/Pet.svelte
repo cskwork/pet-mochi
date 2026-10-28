@@ -1049,9 +1049,6 @@
       const report = await api.generateInteractionReport();
       const tail = report.usedLlm ? "" : " (saved!)";
       flashBubble(`${pet.name}: ${report.text}${tail}`, 8_000);
-      // Surface the file path in the dev console so power users can find it
-      // without us cluttering the bubble UI.
-      console.info("[mochi] report saved →", report.savedPath);
       if (Date.now() >= actionPlayingUntil) {
         pet = { ...pet, currentAnimation: "celebrate" };
       }
