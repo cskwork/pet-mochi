@@ -600,6 +600,15 @@ impl Db {
     }
 
     // ------- Event log -------
+    /// Only diagnostic events expire; conversations, memories and reports are user data.
+    pub fn prune_event_log_older_than(&self, days: u32) -> AppResult<usize> {
+        let conn = self.conn.lock();
+        Ok(conn.execute(
+            "DELETE FROM event_log WHERE julianday(created_at) < julianday('now', ?1)",
+            params![format!("-{days} days")],
+        )?)
+    }
+
     pub fn log_event(&self, event_type: &str, payload: Option<&str>, salience: Option<i32>) -> AppResult<EventLogEntry> {
         let id = Uuid::new_v4().to_string();
         let now = now_rfc3339();
@@ -1179,6 +1188,48 @@ mod tests {
         db.log_event("USER_CLICKED_PET", Some("{}"), Some(20)).unwrap();
         let recent = db.recent_events(10).unwrap();
         assert_eq!(recent.len(), 2);
+    }
+
+    #[test]
+    fn event_log_retention_deletes_old_diagnostics_and_preserves_user_data() {
+        let db = fresh();
+        let old = (Utc::now() - chrono::Duration::days(31)).to_rfc3339();
+        let recent = (Utc::now() - chrono::Duration::days(29)).to_rfc3339();
+        {
+            let conn = db.conn.lock();
+            for (id, timestamp) in [("old", &old), ("recent", &recent)] {
+                conn.execute(
+                    "INSERT INTO event_log (id, event_type, created_at) VALUES (?1, 'TEST', ?2)",
+                    params![id, timestamp],
+                ).unwrap();
+            }
+            conn.execute("INSERT INTO interactions (id, event_type, user_input, created_at) VALUES ('keep', 'CHAT', 'hello', ?1)", params![old]).unwrap();
+            conn.execute("INSERT INTO memories (id, type, content, created_at) VALUES ('keep', 'fact', 'remember me', ?1)", params![old]).unwrap();
+            conn.execute("INSERT INTO status_reports (id, window_start, window_end, prose, created_at) VALUES ('keep', ?1, ?1, 'report', ?1)", params![old]).unwrap();
+            conn.execute("INSERT INTO daily_reflections (id, reflection_date, raw_text, created_at) VALUES ('keep', '2024-01-01', 'reflection', ?1)", params![old]).unwrap();
+        }
+
+        assert_eq!(db.prune_event_log_older_than(30).unwrap(), 1);
+        let events = db.recent_events(10).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].id, "recent");
+        assert_eq!(events[0].created_at, recent);
+        assert_eq!(db.prune_event_log_older_than(30).unwrap(), 0);
+        let conn = db.conn.lock();
+        for (table, content_column, expected) in [
+            ("interactions", "user_input", "hello"),
+            ("memories", "content", "remember me"),
+            ("status_reports", "prose", "report"),
+            ("daily_reflections", "raw_text", "reflection"),
+        ] {
+            let row: (String, String, String) = conn.query_row(
+                &format!("SELECT id, {content_column}, created_at FROM {table}"), [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            ).unwrap();
+            assert_eq!(row, ("keep".into(), expected.into(), old.clone()), "{table}");
+            let count: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0)).unwrap();
+            assert_eq!(count, 1, "{table}");
+        }
     }
 
     /// PRD §10.2: a single corrupt memory row must not abort the whole load.

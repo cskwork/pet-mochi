@@ -17,6 +17,8 @@ tauri-build = { version = "2.0", features = [] }
 [dependencies]
 tauri = { version = "2.1", features = ["macos-private-api"] }
 tauri-plugin-notification = "2"
+# 2.7 requires Rust 1.90; retain the project's Rust 1.89 compatibility.
+tauri-plugin-autostart = "=2.5.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 rusqlite = { version = "0.32", features = ["bundled"] }

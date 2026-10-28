@@ -30,6 +30,9 @@ pub enum AppError {
     #[error("invalid input: {0}")]
     InvalidInput(String),
 
+    #[error("start on login error: {0}")]
+    Autostart(String),
+
     #[error("internal error: {0}")]
     Internal(String),
 }

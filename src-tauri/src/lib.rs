@@ -25,11 +25,21 @@ pub fn run() {
     let _ = env_logger::try_init();
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
+        .plugin({
+            let builder = tauri_plugin_autostart::Builder::new();
+            #[cfg(target_os = "macos")]
+            let builder = builder.macos_launcher(tauri_plugin_autostart::MacosLauncher::LaunchAgent);
+            builder.build()
+        })
         .setup(|app| {
             let pet_home = resolve_pet_home();
             ensure_pet_home(&pet_home).expect("could not create pet_home");
+            let pet_home = pet_home.canonicalize().expect("could not resolve pet_home");
             let db_path = pet_home.join(DB_FILE);
             let db = Arc::new(Db::open(&db_path).expect("could not open mochi.db"));
+            if let Err(e) = db.prune_event_log_older_than(30) {
+                log::warn!("could not prune diagnostic event log: {e}");
+            }
 
             let app_state = AppState::new(db.clone(), pet_home.clone());
 
