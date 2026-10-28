@@ -12,23 +12,53 @@ pub(crate) fn resolve_pet_home() -> AppResult<(PathBuf, AutostartArgs)> {
     let home = custom_home
         .unwrap_or_else(|| default_pet_home().unwrap_or_else(|_| PathBuf::from("./pet_home")));
     ensure_pet_home(&home)?;
-    let home = simplify_verbatim(home.canonicalize()?);
-    let args = autostart_args_for_home(&home, custom)?;
+    // The DB and sandbox keep the canonical path as-is; only the autostart
+    // argument (and the Settings display) use the simplified form.
+    let home = home.canonicalize()?;
+    let args = autostart_args_for_home(&simplify_verbatim(home.clone()), custom)?;
     Ok((home, AutostartArgs(args)))
 }
 
 /// Windows `canonicalize` returns verbatim paths (`\\?\C:\…`,
-/// `\\?\UNC\server\…`). Strip the prefix so the home is shown and passed
-/// to autostart the way users write it; other paths are returned unchanged.
-fn simplify_verbatim(path: PathBuf) -> PathBuf {
+/// `\\?\UNC\server\…`). Strip the prefix only when the plain form means the
+/// same path (drive or UNC root, under MAX_PATH, no reserved device names, no
+/// component ending in '.' or ' '); otherwise keep the verbatim path, which
+/// the autostart allow-list then rejects explicitly. Other paths unchanged.
+pub(crate) fn simplify_verbatim(path: PathBuf) -> PathBuf {
     let Some(s) = path.to_str() else { return path };
-    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
-        return PathBuf::from(format!(r"\\{rest}"));
+    let plain = if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else if let Some(rest) = s.strip_prefix(r"\\?\") {
+        let bytes = rest.as_bytes();
+        let drive_root = bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && bytes[2] == b'\\';
+        if !drive_root {
+            return path;
+        }
+        rest.to_string()
+    } else {
+        return path;
+    };
+    const MAX_PATH: usize = 260;
+    let reserved = |name: &str| {
+        let stem = name.split('.').next().unwrap_or("").to_ascii_uppercase();
+        matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+            || ((stem.starts_with("COM") || stem.starts_with("LPT"))
+                && stem.len() == 4
+                && stem.as_bytes()[3].is_ascii_digit())
+    };
+    let safe = plain.len() < MAX_PATH
+        && plain
+            .split('\\')
+            .filter(|c| !c.is_empty())
+            .all(|c| !reserved(c) && !c.ends_with('.') && !c.ends_with(' '));
+    if safe {
+        PathBuf::from(plain)
+    } else {
+        path
     }
-    if let Some(rest) = s.strip_prefix(r"\\?\") {
-        return PathBuf::from(rest);
-    }
-    path
 }
 
 /// `None` selects the default home; an explicit flag must never silently fall back.
@@ -346,7 +376,7 @@ mod tests {
     }
 
     #[test]
-    fn verbatim_windows_paths_are_simplified_and_then_accepted() {
+    fn verbatim_windows_paths_are_simplified_only_when_meaning_is_kept() {
         let plain = simplify_verbatim(PathBuf::from(r"\\?\C:\Users\Me\Mochi"));
         assert_eq!(plain, PathBuf::from(r"C:\Users\Me\Mochi"));
         let unc = simplify_verbatim(PathBuf::from(r"\\?\UNC\server\share\Mochi"));
@@ -355,6 +385,20 @@ mod tests {
         for home in [plain, unc] {
             let args = autostart_args_for_home(&home, true).unwrap();
             validate_autostart_launch(AutostartTarget::Windows, None, &args).unwrap();
+        }
+        // Only representable as verbatim: kept as-is, so autostart rejects it explicitly.
+        let long = format!(r"\\?\C:\{}", "a".repeat(300));
+        for keep in [
+            r"\\?\C:\Users\Me\CON".to_string(),
+            r"\\?\C:\Users\Me\nul.txt".to_string(),
+            r"\\?\C:\Users\Me\trailing.".to_string(),
+            r"\\?\C:\Users\Me\trailing ".to_string(),
+            r"\\?\GLOBALROOT\Device\Mochi".to_string(),
+            long,
+        ] {
+            assert_eq!(simplify_verbatim(PathBuf::from(&keep)), PathBuf::from(&keep));
+            let args = autostart_args_for_home(&PathBuf::from(&keep), true).unwrap();
+            assert!(validate_autostart_launch(AutostartTarget::Windows, None, &args).is_err());
         }
     }
 }

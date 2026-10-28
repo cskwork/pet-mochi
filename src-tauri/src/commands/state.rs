@@ -79,7 +79,7 @@ pub fn get_settings(state: State<'_, AppState>) -> AppResult<Settings> {
 fn get_settings_inner(state: &AppState) -> AppResult<Settings> {
     let mut s = load_settings_raw(&state.db)?;
     s.cloud_api_key_set = key_present(&state.db)?;
-    s.pet_home_path = Some(state.pet_home.to_string_lossy().into_owned());
+    s.pet_home_path = Some(crate::startup::simplify_verbatim(state.pet_home.clone()).to_string_lossy().into_owned());
     Ok(s)
 }
 
@@ -227,7 +227,7 @@ fn save_settings_inner(
 
     let mut echoed = to_persist;
     echoed.cloud_api_key_set = key_present(&state.db)?;
-    echoed.pet_home_path = Some(state.pet_home.to_string_lossy().into_owned());
+    echoed.pet_home_path = Some(crate::startup::simplify_verbatim(state.pet_home.clone()).to_string_lossy().into_owned());
     Ok(echoed)
 }
 
