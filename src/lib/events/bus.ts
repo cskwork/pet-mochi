@@ -4,6 +4,11 @@ import { api } from "../bridge/api";
 
 type Handler = (event: PetEvent, state: PetState) => void;
 
+/** Events whose backend command already persists them (`approve_file` logs
+ *  FILE_INSPECTION_APPROVED). Logging them here too would double-count them
+ *  in status-report summaries — the command is the single owner. */
+const LOGGED_BY_BACKEND: ReadonlySet<PetEvent["type"]> = new Set(["FILE_INSPECTION_APPROVED"]);
+
 class EventBus {
   private handlers: Set<Handler> = new Set();
   private logRing: Array<{ event: PetEvent; ts: number }> = [];
@@ -27,7 +32,7 @@ class EventBus {
     // Log salient events. Score-only: calling shouldCallLLM here would
     // consume the shared LLM cooldown a second time (the handler already
     // did), which also made this log branch almost never run.
-    if (api.hasBackend && isSalient(event, state)) {
+    if (api.hasBackend && !LOGGED_BY_BACKEND.has(event.type) && isSalient(event, state)) {
       void api
         .logEvent(event.type, JSON.stringify(event), salienceScore(event, state))
         .catch(() => undefined);

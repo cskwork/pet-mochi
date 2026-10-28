@@ -671,6 +671,9 @@
       await w.setPosition(new PhysicalPosition(pos.x, pos.y - Math.round(delta * sf)));
       // Same on-screen spot inside the taller/shorter window.
       movePet({ x: position.x, y: position.y + delta }, false);
+      // onResize may already have re-placed her during the awaits above, so
+      // the offset can land on a panel — clamp once more.
+      keepPetInView();
       roam.invalidate();
       invalidateWinPos();
     } catch (err) {

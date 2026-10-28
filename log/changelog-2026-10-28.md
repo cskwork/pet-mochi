@@ -61,7 +61,7 @@ personality setting real and adds art-free customization.
 
 ## Verification
 
-`npm test` 303 passed (was 255) · `npm run check` 0/0 ·
+`npm test` 304 passed (was 255) · `npm run check` 0/0 ·
 `cargo +1.95.0 test --lib` 102 passed (was 79) · `cargo build` OK ·
 smoke-tested in `tauri dev` with an isolated `MOCHI_HOME`.
 

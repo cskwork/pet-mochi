@@ -35,6 +35,11 @@ describe("eventBus salience logging", () => {
     expect(logEvent).toHaveBeenCalledTimes(1);
   });
 
+  it("leaves backend-persisted events to their command (no double log)", () => {
+    eventBus.dispatch({ type: "FILE_INSPECTION_APPROVED", path: "notes.md" }, newPetState());
+    expect(logEvent).not.toHaveBeenCalled();
+  });
+
   it("does not log low-salience ticks", () => {
     eventBus.dispatch({ type: "IDLE_TICK" }, newPetState());
     expect(logEvent).not.toHaveBeenCalled();

@@ -11,7 +11,7 @@ optional local LLM. Works fully offline. No accounts. No cloud. No telemetry.
 [![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)](https://tauri.app)
 [![Svelte 5](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte&logoColor=white)](https://svelte.dev)
 [![Rust](https://img.shields.io/badge/Rust-1.89+-orange?logo=rust&logoColor=white)](https://www.rust-lang.org)
-[![Tests](https://img.shields.io/badge/tests-405%20passing-brightgreen)](#run-tests)
+[![Tests](https://img.shields.io/badge/tests-406%20passing-brightgreen)](#run-tests)
 
 <img src="public/sprites/mochi-celebrate.png" width="200" alt="Mochi celebrating" />
 
@@ -233,7 +233,7 @@ sandbox.
 ### Run tests
 
 ```bash
-npm test                                 # 303 frontend simulation tests (vitest)
+npm test                                 # 304 frontend simulation tests (vitest)
 cd src-tauri && cargo test --lib         # 102 backend tests (db, sandbox, llm, prompts)
 ```
 
