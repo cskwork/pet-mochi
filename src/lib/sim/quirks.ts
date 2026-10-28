@@ -1,4 +1,5 @@
 import type { AnimationStep } from "./actions";
+import { DEFAULT_PERSONALITY, type PersonalityParams } from "./personality";
 import type { Mood, MovementState, PetState } from "./state";
 
 /**
@@ -90,6 +91,20 @@ export const QUIRK_POOLS: Record<Mood, readonly QuirkChain[]> = {
         { animation: "tilt_head", durationMs: 600 },
       ],
     },
+    {
+      key: "hungry_peek",
+      steps: [
+        { animation: "peek", durationMs: 500 },
+        { animation: "tilt_head", durationMs: 500 },
+      ],
+    },
+    {
+      key: "hungry_wait",
+      steps: [
+        { animation: "sit", durationMs: 600 },
+        { animation: "look_cursor", durationMs: 500 },
+      ],
+    },
   ],
   bored: [
     {
@@ -115,6 +130,20 @@ export const QUIRK_POOLS: Record<Mood, readonly QuirkChain[]> = {
         { animation: "sit", durationMs: 600 },
       ],
     },
+    {
+      key: "lonely_nuzzle",
+      steps: [
+        { animation: "nuzzle", durationMs: 600 },
+        { animation: "sit", durationMs: 500 },
+      ],
+    },
+    {
+      key: "lonely_look",
+      steps: [
+        { animation: "look_cursor", durationMs: 600 },
+        { animation: "tilt_head", durationMs: 500 },
+      ],
+    },
   ],
 };
 
@@ -131,13 +160,27 @@ export function nextQuirk(
   now: number,
   rng: () => number = Math.random,
   chanceScale = 1,
+  personality: PersonalityParams = DEFAULT_PERSONALITY,
 ): QuirkChain | null {
   if (!QUIRK_ELIGIBLE_ANIMATIONS.has(state.currentAnimation)) return null;
   if (lastQuirkAt !== null && now - lastQuirkAt < QUIRK_COOLDOWN_MS) return null;
-  const chance = QUIRK_CHANCE * Math.max(0, Math.min(1, chanceScale));
+  const chance =
+    QUIRK_CHANCE * Math.max(0, Math.min(1, chanceScale)) * personality.quirkChanceScale;
   if (chance <= 0) return null;
   if (rng() >= chance) return null;
-  const pool = QUIRK_POOLS[state.mood];
+  const pool = quirkPoolFor(state.mood, personality);
   const idx = Math.min(pool.length - 1, Math.max(0, Math.floor(rng() * pool.length)));
   return pool[idx];
+}
+
+/** Mood pool plus the personality's extra chains for that mood. Curious adds
+ *  none, so its pools are exactly {@link QUIRK_POOLS}. */
+export function quirkPoolFor(
+  mood: Mood,
+  personality: PersonalityParams = DEFAULT_PERSONALITY,
+): readonly QuirkChain[] {
+  const extras = personality.extraQuirks
+    .filter((q) => q.moods.includes(mood))
+    .map(({ key, steps }) => ({ key, steps }));
+  return extras.length === 0 ? QUIRK_POOLS[mood] : [...QUIRK_POOLS[mood], ...extras];
 }

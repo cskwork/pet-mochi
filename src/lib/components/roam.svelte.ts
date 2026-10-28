@@ -108,6 +108,8 @@ export function createRoam(hooks: RoamHooks) {
     petPos: { x: number; y: number };
     viewport: { width: number; height: number };
     petSize: number;
+    /** Personality wander-step multiplier (curious = 1). */
+    stepScale?: number;
   }): RoamStepResult | null {
     if (!api.hasBackend) return null;
     maybeRefresh(args.now);
@@ -121,7 +123,7 @@ export function createRoam(hooks: RoamHooks) {
       args.petSize,
     );
     if (entryEdge) return { type: "crossing", entryEdge };
-    const step = nextWanderDelta();
+    const step = nextWanderDelta(Math.random, args.stepScale ?? 1);
     const roam = advanceRoam(
       cache.winPosLogical,
       args.petPos,

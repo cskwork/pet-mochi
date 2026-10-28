@@ -107,3 +107,18 @@ describe("REQ-106 quirk pools", () => {
     expect(a).toEqual(b);
   });
 });
+
+describe("quirk variety for needs moods", () => {
+  it("hungry and lonely each have at least three chains", () => {
+    expect(QUIRK_POOLS.hungry.length).toBeGreaterThanOrEqual(3);
+    expect(QUIRK_POOLS.lonely.length).toBeGreaterThanOrEqual(3);
+    const p = pet({ currentAnimation: "idle", mood: "lonely" });
+    const keys = new Set(
+      [0, 0.1, 0.2, 0.5, 0.9].map((r) => {
+        let first = true;
+        return nextQuirk(p, null, NOW, () => (first ? ((first = false), 0) : r))!.key;
+      }),
+    );
+    expect(keys.size).toBeGreaterThanOrEqual(3);
+  });
+});

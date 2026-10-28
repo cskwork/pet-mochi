@@ -74,17 +74,22 @@ export function nextNudge(
   nudgeState: NudgeState,
   now: number,
   rng: () => number = Math.random,
+  cooldownScale = 1,
 ): NudgeResult | null {
   // Global cooldown gates EVERY kind — including the same kind, which is
   // additionally bounded by the per-kind window.
-  if (nudgeState.lastAny !== null && now - nudgeState.lastAny < ANY_KIND_COOLDOWN_MS) {
+  // Personality scales both windows (quiet nudges less; curious = 1).
+  if (
+    nudgeState.lastAny !== null &&
+    now - nudgeState.lastAny < ANY_KIND_COOLDOWN_MS * cooldownScale
+  ) {
     return null;
   }
 
   for (const t of TRIGGERS) {
     if (!t.fires(state)) continue;
     const last = nudgeState.lastByKind[t.kind];
-    if (last !== undefined && now - last < PER_KIND_COOLDOWN_MS) continue;
+    if (last !== undefined && now - last < PER_KIND_COOLDOWN_MS * cooldownScale) continue;
     const pool = BUBBLES[t.kind];
     const idx = Math.min(pool.length - 1, Math.max(0, Math.floor(rng() * pool.length)));
     return { kind: t.kind, bubble: pool[idx], animation: t.animation };

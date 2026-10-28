@@ -41,6 +41,8 @@
     minutesSinceActivity,
     type PresenceState,
     type Ritual,
+    personalityFor,
+    hoverReaction,
     type ActionKey,
     type AnimationStep,
     type ChoreographyPick,
@@ -65,9 +67,29 @@
   import { createRoam } from "./roam.svelte";
   import { createNotify } from "./notify.svelte";
   import { Window, cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
+  import { LogicalSize, PhysicalPosition } from "@tauri-apps/api/dpi";
+  import type { Settings as ApiSettings } from "../bridge/api";
+  import {
+    BASE_PET_SIZE,
+    normalizeAccessory,
+    normalizeSkin,
+    petSizeFor,
+    type PetAccessory,
+    type PetSkin,
+  } from "./appearance";
 
-  type Props = { petSize?: number };
-  let { petSize = 140 }: Props = $props();
+  // Settings → Appearance / Personality, applied live (settings:changed).
+  let petScale = $state(1);
+  // Live size: hit-testing, bubble, consent, particles, and roam all read it.
+  let petSize = $derived(petSizeFor(petScale));
+  let petSkin = $state<PetSkin>("classic");
+  let petAccessory = $state<PetAccessory>("none");
+  let personality = $state(personalityFor("curious"));
+  // Overlay size at launch (tauri.conf.json); grown only to fit a big pet.
+  let baseWindowSize: { width: number; height: number } | null = null;
+  // Hover reaction (USER_HOVERED_PET) edge + cooldown stamp.
+  let cursorOverPet = false;
+  let lastHoverAt: number | null = null;
 
   let pet = $state<PetState>(newPetState());
   let position = $state({ x: 0, y: 0 });
@@ -364,6 +386,7 @@
       petPos: position,
       viewport: viewportSize,
       petSize,
+      stepScale: personality.wanderStepScale,
     });
     if (result === null) return false;
     if (result.type === "crossing") {
@@ -384,7 +407,7 @@
     const elapsedSec = (now - lastTickAt) / 1000;
     lastTickAt = now;
     const ctx = buildContext();
-    const next = runTick(pet, ctx, elapsedSec);
+    const next = runTick(pet, ctx, elapsedSec, personality);
 
     // Update facing based on cursor side
     if (ctx.cursorNearPet) {
@@ -409,6 +432,8 @@
           position,
           { width: viewportSize.width, height: viewportSize.height, petSize },
           currentObstacles(),
+          Math.random,
+          personality.wanderStepScale,
         );
         facing = newPos.x < position.x ? "left" : newPos.x > position.x ? "right" : facing;
         movePet(newPos, true);
@@ -426,7 +451,7 @@
     // Spontaneous canned nudge if any mood threshold is crossed (priority +
     // cooldowns enforced inside `nextNudge`). LLM is intentionally not in this
     // path — nudges must work even when Ollama is offline (PRD §5.2).
-    const nudge = nextNudge(pet, nudgeState, now);
+    const nudge = nextNudge(pet, nudgeState, now, Math.random, personality.nudgeCooldownScale);
     if (nudge) {
       flashBubble(`${pet.name}: ${nudge.bubble}`, 2_500);
       // Never on a sleeping pet: an autonomous nudge pose would break the
@@ -468,7 +493,14 @@
     // a status report is due — quirks fire about once a minute, which would
     // otherwise keep resetting the 60s idle window REQ-070 needs.
     if (!nudge && !statusReportDue(now) && now >= actionPlayingUntil) {
-      const quirk = nextQuirk(pet, lastQuirkAt, now, Math.random, animationIntensity);
+      const quirk = nextQuirk(
+        pet,
+        lastQuirkAt,
+        now,
+        Math.random,
+        animationIntensity,
+        personality,
+      );
       if (quirk) {
         lastQuirkAt = now;
         playSteps(quirk.steps);
@@ -547,6 +579,110 @@
       bubbleOpen = false;
       bubbleTimer = undefined;
     }, ms);
+  }
+
+  /** Apply the settings fields the overlay follows — at load and on every
+   *  settings:changed broadcast (the echoed, backend-normalized values). */
+  function applyLiveSettings(s: Partial<ApiSettings>) {
+    if (typeof s.animationIntensity === "number") {
+      animationIntensity = clampIntensity(s.animationIntensity);
+    }
+    if ("stageBackground" in s) applyStageBackground(s.stageBackground);
+    if (typeof s.soundEffects === "boolean") setSfxEnabled(s.soundEffects);
+    if (typeof s.desktopNotifications === "boolean") notify.setEnabled(s.desktopNotifications);
+    if (typeof s.personalityPreset === "string") {
+      personality = personalityFor(s.personalityPreset);
+    }
+    if (typeof s.petSkin === "string") petSkin = normalizeSkin(s.petSkin);
+    if (typeof s.petAccessory === "string") petAccessory = normalizeAccessory(s.petAccessory);
+    if (typeof s.petScale === "number") setPetScale(s.petScale);
+    if (typeof s.alwaysOnTop === "boolean" && api.hasBackend) {
+      getCurrentWindow()
+        .setAlwaysOnTop(s.alwaysOnTop)
+        .catch((err) => console.warn("setAlwaysOnTop failed", err));
+    }
+    // Live rename: the backend already renamed the pet row on save; bubbles
+    // and copy read pet.name, so they pick it up immediately.
+    if (typeof s.petName === "string" && s.petName.trim() && s.petName !== pet.name) {
+      pet = { ...pet, name: s.petName };
+    }
+  }
+
+  /** Resize the pet around her feet (center-bottom stays put), then make
+   *  sure the overlay has room for her and she isn't under a panel. */
+  function setPetScale(scale: number) {
+    const before = petSize;
+    petScale = Number.isFinite(scale) ? scale : 1;
+    const after = petSize;
+    if (after === before) return;
+    if (positionInitialised) {
+      movePet(
+        { x: position.x - (after - before) / 2, y: position.y - (after - before) },
+        false,
+      );
+      keepPetInView();
+    }
+    void fitWindowToPet();
+  }
+
+  /** Clamp the pet into the viewport and out from under the panels. */
+  function keepPetInView() {
+    if (!positionInitialised) return;
+    const maxX = Math.max(0, viewportSize.width - petSize);
+    const maxY = Math.max(0, viewportSize.height - petSize);
+    const clamped = {
+      x: Math.min(maxX, Math.max(0, position.x)),
+      y: Math.min(maxY, Math.max(0, position.y)),
+    };
+    const obs = currentObstacles();
+    const overlaps = obs.some(
+      (o) =>
+        clamped.x < o.right &&
+        clamped.x + petSize > o.left &&
+        clamped.y < o.bottom &&
+        clamped.y + petSize > o.top,
+    );
+    const next = overlaps
+      ? findSafeStartPosition(
+          { width: viewportSize.width, height: viewportSize.height, petSize },
+          obs,
+        )
+      : clamped;
+    if (next.x !== position.x || next.y !== position.y) movePet(next, false);
+  }
+
+  /**
+   * The 360×360 overlay fits a 140px pet with room for the bubble between the
+   * status chip and the actions panel; a 1.5× (210px) pet doesn't. Grow the
+   * window's height by however much the pet grew (never shrink below the
+   * launch size), shifting it up by the same amount so the bottom edge —
+   * where the actions panel and usually Mochi sit — stays where it was.
+   */
+  async function fitWindowToPet() {
+    if (!api.hasBackend || !baseWindowSize) return;
+    const targetH = baseWindowSize.height + Math.max(0, petSize - BASE_PET_SIZE);
+    const delta = targetH - viewportSize.height;
+    if (delta === 0) return;
+    try {
+      const w = getCurrentWindow();
+      const pos = await w.outerPosition();
+      const sf = cachedScaleFactor || 1;
+      await w.setSize(new LogicalSize(baseWindowSize.width, targetH));
+      await w.setPosition(new PhysicalPosition(pos.x, pos.y - Math.round(delta * sf)));
+      // Same on-screen spot inside the taller/shorter window.
+      movePet({ x: position.x, y: position.y + delta }, false);
+      roam.invalidate();
+      invalidateWinPos();
+    } catch (err) {
+      console.warn("resizing overlay for pet size failed", err);
+    }
+  }
+
+  /** Cursor entered the pet: route a hover through the bus (low salience —
+   *  never reaches the LLM gate); the subscriber picks the reaction. */
+  function onHoverEnter() {
+    if (osDragging || dragStart || Date.now() < actionPlayingUntil) return;
+    eventBus.dispatch({ type: "USER_HOVERED_PET" }, pet);
   }
 
   function clampIntensity(n: number): number {
@@ -936,6 +1072,7 @@
       height: window.innerHeight,
     };
     invalidateWinPos();
+    keepPetInView();
   }
 
   function onPointerDown(e: PointerEvent) {
@@ -1348,6 +1485,11 @@
       // Window-local cursor even when outside the window: outside reads as
       // far away, so cursorNearPet can't stick on after the pointer leaves.
       cursor = { x: lx, y: ly };
+      // Hover edge for the USER_HOVERED_PET reaction (live rect, no slop).
+      const pr = petEl?.getBoundingClientRect();
+      const over = !!pr && lx >= pr.left && lx <= pr.right && ly >= pr.top && ly <= pr.bottom;
+      if (over && !cursorOverPet) onHoverEnter();
+      cursorOverPet = over;
       void applyClickThrough(!isInsideInteractive(lx, ly));
       return (
         osDragging ||
@@ -1376,6 +1518,7 @@
 
   onMount(async () => {
     onResize();
+    baseWindowSize = { ...viewportSize };
     window.addEventListener("resize", onResize);
     window.addEventListener("pointermove", onPointerMove);
 
@@ -1415,34 +1558,17 @@
       // REQ-113/114/117 — load animation intensity, stage background, and the
       // sound toggle; follow live changes from the settings window.
       try {
-        const settings = await api.getSettings();
-        animationIntensity = clampIntensity(settings.animationIntensity);
-        notify.setEnabled(settings.desktopNotifications);
-        applyStageBackground(settings.stageBackground);
-        setSfxEnabled(settings.soundEffects);
+        applyLiveSettings(await api.getSettings());
       } catch {
         // Defaults stay: intensity 1, transparent stage, sounds on.
       }
       try {
-        unlistenSettings = await listen<{
-          animationIntensity?: number;
-          stageBackground?: string;
-          soundEffects?: boolean;
-          desktopNotifications?: boolean;
-        }>("settings:changed", (payload) => {
-          if (payload && typeof payload.animationIntensity === "number") {
-            animationIntensity = clampIntensity(payload.animationIntensity);
-          }
-          if (payload && "stageBackground" in payload) {
-            applyStageBackground(payload.stageBackground);
-          }
-          if (payload && typeof payload.soundEffects === "boolean") {
-            setSfxEnabled(payload.soundEffects);
-          }
-          if (payload && typeof payload.desktopNotifications === "boolean") {
-            notify.setEnabled(payload.desktopNotifications);
-          }
-        });
+        unlistenSettings = await listen<Partial<ApiSettings>>(
+          "settings:changed",
+          (payload) => {
+            if (payload) applyLiveSettings(payload);
+          },
+        );
       } catch {
         // Live updates are a nicety; the mount-time read above still applied.
       }
@@ -1509,6 +1635,18 @@
     // Subscribe to the in-process bus so high-salience autonomous events
     // actually trigger a response (otherwise the salience gate is dead code).
     unsubscribeBus = eventBus.subscribe((event, state) => {
+      // Hover: tiny local reaction by mood + personality. Handled before the
+      // LLM gate on purpose — never an LLM call, never a sound.
+      if (event.type === "USER_HOVERED_PET") {
+        const now = Date.now();
+        if (osDragging || now < actionPlayingUntil) return;
+        const steps = hoverReaction(pet, lastHoverAt, now, Math.random, personality);
+        if (steps) {
+          lastHoverAt = now;
+          playSteps(steps);
+        }
+        return;
+      }
       // REQ-108 — the deterministic greeting ritual plays instantly, with or
       // without a backend/LLM; the mood-aware chat line follows if available.
       if (event.type === "USER_RETURNED" && event.awayMinutes >= 30) {
@@ -1628,6 +1766,10 @@
     onpointermove={onPetPointerMove}
     onpointerup={onPetPointerUp}
     onpointercancel={onPetPointerUp}
+    onpointerenter={() => {
+      // Browser preview has no global poll; Tauri uses the poll's hover edge.
+      if (!api.hasBackend) onHoverEnter();
+    }}
     onclick={onPetClick}
     oncontextmenu={openContextMenu}
     aria-label="Mochi"
@@ -1638,6 +1780,8 @@
       size={petSize}
       facing={facing}
       motion={animationIntensity > 0}
+      skin={petSkin}
+      accessory={petAccessory}
     />
   </button>
 

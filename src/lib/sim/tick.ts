@@ -1,6 +1,7 @@
 import { applyDecay } from "./decay";
 import { deriveMood } from "./mood";
 import { chooseMovement } from "./movement";
+import { DEFAULT_PERSONALITY, type PersonalityParams } from "./personality";
 import type { PetState, RuntimeContext } from "./state";
 
 /**
@@ -19,10 +20,15 @@ export function runTick(
   state: PetState,
   ctx: RuntimeContext,
   elapsedSeconds: number,
+  personality: PersonalityParams = DEFAULT_PERSONALITY,
 ): PetState {
-  const decayed = applyDecay(state, Math.min(elapsedSeconds, MAX_TICK_ELAPSED_SECONDS));
+  const decayed = applyDecay(
+    state,
+    Math.min(elapsedSeconds, MAX_TICK_ELAPSED_SECONDS),
+    personality,
+  );
   const mood = deriveMood(decayed);
-  const movement = chooseMovement({ ...decayed, mood }, ctx);
+  const movement = chooseMovement({ ...decayed, mood }, ctx, undefined, personality);
   return {
     ...decayed,
     mood,

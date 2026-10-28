@@ -10,6 +10,13 @@
   } from "../bridge/api";
   import { emit } from "../bridge/tauri";
   import { KEEPSAKE_MEMORY_TYPE } from "../sim";
+  import {
+    ACCESSORY_LABELS,
+    PET_ACCESSORIES,
+    PET_SKINS,
+    SKIN_LABELS,
+    SKIN_SWATCHES,
+  } from "./appearance";
 
   let settings = $state<Settings | null>(null);
   let memories = $state<Memory[]>([]);
@@ -290,17 +297,74 @@
       <section id="panel-general" role="tabpanel" aria-labelledby="tab-general">
         <label>
           Pet name
-          <input bind:value={settings.petName} />
+          <input bind:value={settings.petName} onchange={save} maxlength="24" />
         </label>
         <label>
           Personality
-          <select bind:value={settings.personalityPreset}>
+          <select
+            bind:value={settings.personalityPreset}
+            onchange={save}
+            aria-describedby="personality-help"
+          >
             <option value="curious">curious</option>
             <option value="lazy">lazy</option>
             <option value="playful">playful</option>
             <option value="quiet">quiet</option>
           </select>
+          <span class="hint" id="personality-help">
+            Curious watches you and explores · Lazy sits more and naps sooner ·
+            Playful hops, roams and fidgets more · Quiet stays calm and nudges less.
+          </span>
         </label>
+
+        <fieldset>
+          <legend>Appearance</legend>
+          <label>
+            Size
+            <input
+              type="range"
+              min="0.75"
+              max="1.5"
+              step="0.05"
+              bind:value={settings.petScale}
+              onchange={save}
+              aria-valuetext={`${Math.round(settings.petScale * 100)} percent`}
+            />
+            <span>{Math.round(settings.petScale * 100)}%</span>
+          </label>
+          <div class="skin-group" role="radiogroup" aria-labelledby="skin-label">
+            <span class="group-label" id="skin-label">Skin</span>
+            <div class="swatches">
+              {#each PET_SKINS as skin (skin)}
+                <label class="swatch-option" title={SKIN_LABELS[skin]}>
+                  <input
+                    type="radio"
+                    name="pet-skin"
+                    value={skin}
+                    bind:group={settings.petSkin}
+                    onchange={save}
+                    aria-label={`${SKIN_LABELS[skin]} skin`}
+                  />
+                  <span
+                    class="swatch"
+                    style="background: {SKIN_SWATCHES[skin]};"
+                    aria-hidden="true"
+                  ></span>
+                  <span class="swatch-name" aria-hidden="true">{SKIN_LABELS[skin]}</span>
+                </label>
+              {/each}
+            </div>
+          </div>
+          <label>
+            Accessory
+            <select bind:value={settings.petAccessory} onchange={save}>
+              {#each PET_ACCESSORIES as acc (acc)}
+                <option value={acc}>{ACCESSORY_LABELS[acc]}</option>
+              {/each}
+            </select>
+          </label>
+          <span class="hint">Applies to the pet window immediately.</span>
+        </fieldset>
         <label>
           LLM provider
           <select bind:value={settings.llmProvider}>
@@ -362,7 +426,7 @@
           Memory enabled
         </label>
         <label class="row">
-          <input type="checkbox" bind:checked={settings.alwaysOnTop} />
+          <input type="checkbox" bind:checked={settings.alwaysOnTop} onchange={save} />
           Always on top
         </label>
         <label class="row">
@@ -668,6 +732,51 @@
   }
   .hint {
     font-size: 12px;
+    color: #6a5a6a;
+  }
+  .group-label {
+    font-size: 12px;
+    color: #4a3a4a;
+  }
+  .swatches {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 4px;
+  }
+  .swatch-option {
+    position: relative;
+    align-items: center;
+    gap: 2px;
+    cursor: pointer;
+  }
+  /* Native radio stays in the a11y tree / tab order (arrow keys move the
+     selection); the swatch is its visual. */
+  .swatch-option input {
+    position: absolute;
+    opacity: 0;
+    width: 1px;
+    height: 1px;
+    margin: 0;
+  }
+  .swatch {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: 1px solid #d9c3cd;
+    box-sizing: border-box;
+  }
+  .swatch-option input:checked + .swatch {
+    box-shadow:
+      0 0 0 2px #fff,
+      0 0 0 4px #d66b93;
+  }
+  .swatch-option input:focus-visible + .swatch {
+    outline: 2px solid #3a6fd8;
+    outline-offset: 4px;
+  }
+  .swatch-name {
+    font-size: 10px;
     color: #6a5a6a;
   }
   .warn {

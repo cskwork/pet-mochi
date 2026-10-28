@@ -17,7 +17,14 @@ export type Memory = {
 
 export type Settings = {
   petName: string;
+  /** "curious" | "lazy" | "playful" | "quiet"; backend normalizes. */
   personalityPreset: string;
+  /** Pet size multiplier; backend clamps to [0.75, 1.5]. */
+  petScale: number;
+  /** "classic" | "peach" | "matcha" | "sky" | "lavender" | "cocoa". */
+  petSkin: string;
+  /** "none" | "bow" | "flower" | "crown" | "tophat" | "cap". */
+  petAccessory: string;
   llmProvider: string;
   ollamaEndpoint: string;
   ollamaModel: string;

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import type { Mood, MovementState } from "../sim/state";
+  import { accessoryPlacement, normalizeSkin, SKIN_FILTERS } from "./appearance";
 
   type Props = {
     mood: Mood;
@@ -12,6 +13,10 @@
     /** False at animation intensity 0: stops every continuous CSS animation
      *  (breathe, bobs, floating mood marks) — same set as reduced motion. */
     motion?: boolean;
+    /** Settings skin key; tints a wrapper so it composes with mood tints. */
+    skin?: string;
+    /** Settings accessory key; an emoji anchored on the head. */
+    accessory?: string;
   };
 
   let {
@@ -25,6 +30,8 @@
     blink: _blink = false,
     breathe = true,
     motion = true,
+    skin = "classic",
+    accessory = "none",
   }: Props = $props();
 
   type FrameSrc = string | [string, string];
@@ -131,6 +138,8 @@
   // Covers eat/eat_2 and the REQ-116 snack-specific frames.
   let isEating = $derived(animation.startsWith("eat"));
   let moodFilter = $derived(MOOD_FILTER[mood]);
+  let skinFilter = $derived(SKIN_FILTERS[normalizeSkin(skin)]);
+  let accessoryPos = $derived(accessoryPlacement(accessory, animation));
 </script>
 
 <div
@@ -141,6 +150,10 @@
   class:asleep={isAsleep}
   data-anim={animation}
 >
+  <!-- .body carries the facing flip + pose keyframes so the accessory moves
+       with the sprite; .skin tints only the art (not the accessory/marks). -->
+  <div class="body">
+  <div class="skin" style="filter: {skinFilter};">
   <img
     class="sprite"
     src={currentSrc}
@@ -157,6 +170,15 @@
       }
     }}
   />
+  </div>
+  {#if accessoryPos}
+    <span
+      class="accessory"
+      aria-hidden="true"
+      style="left: {accessoryPos.x * 100}%; top: {accessoryPos.y * 100}%; font-size: {Math.round(size * accessoryPos.size)}px; transform: translate(-50%, -50%) rotate({accessoryPos.rot}deg);"
+    >{accessoryPos.glyph}</span>
+  {/if}
+  </div>
 
   {#if mood === "curious" && !isAsleep}
     <div class="mark mark-curious" aria-hidden="true">?</div>
@@ -201,11 +223,29 @@
     will-change: transform;
   }
 
+  .body {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    transform: scaleX(var(--scale-x));
+  }
+
+  .skin {
+    width: 100%;
+    height: 100%;
+  }
+
+  .accessory {
+    position: absolute;
+    line-height: 1;
+    pointer-events: none;
+    user-select: none;
+  }
+
   .sprite {
     width: 100%;
     height: 100%;
     display: block;
-    transform: scaleX(var(--scale-x));
     filter: var(--mood-filter);
     transition: filter 600ms ease;
     image-rendering: auto;
@@ -213,86 +253,86 @@
     -webkit-user-drag: none;
   }
 
-  .mochi.breathe .sprite {
+  .mochi.breathe .body {
     animation: breathe 3.6s ease-in-out infinite;
   }
 
-  .mochi.asleep .sprite {
+  .mochi.asleep .body {
     animation: snore 4s ease-in-out infinite;
   }
 
-  .mochi[data-anim="walk"] .sprite {
+  .mochi[data-anim="walk"] .body {
     animation: bob 0.6s ease-in-out infinite;
   }
 
-  .mochi[data-anim="run"] .sprite {
+  .mochi[data-anim="run"] .body {
     animation: bob 0.32s ease-in-out infinite;
   }
 
-  .mochi[data-anim="jump"] .sprite {
+  .mochi[data-anim="jump"] .body {
     animation: hop 0.7s ease-out infinite;
   }
 
-  .mochi[data-anim="celebrate"] .sprite {
+  .mochi[data-anim="celebrate"] .body {
     animation: wiggle 0.6s ease-in-out infinite;
   }
 
   /* Munching = quick small vertical squash so the chew reads even on a still PNG. */
-  .mochi[data-anim="eat"] .sprite,
-  .mochi[data-anim="eat_2"] .sprite,
-  .mochi[data-anim="eat_strawberry"] .sprite,
-  .mochi[data-anim="eat_strawberry_2"] .sprite,
-  .mochi[data-anim="eat_cookie"] .sprite,
-  .mochi[data-anim="eat_cookie_2"] .sprite {
+  .mochi[data-anim="eat"] .body,
+  .mochi[data-anim="eat_2"] .body,
+  .mochi[data-anim="eat_strawberry"] .body,
+  .mochi[data-anim="eat_strawberry_2"] .body,
+  .mochi[data-anim="eat_cookie"] .body,
+  .mochi[data-anim="eat_cookie_2"] .body {
     animation: chew 0.32s ease-in-out infinite;
   }
 
   /* Yawning = slow stretch upward. */
-  .mochi[data-anim="yawn"] .sprite {
+  .mochi[data-anim="yawn"] .body {
     animation: yawnStretch 1.2s ease-in-out infinite;
   }
 
   /* Rolling = continuous tilt, paired with the side-rolled sprite. */
-  .mochi[data-anim="roll"] .sprite {
+  .mochi[data-anim="roll"] .body {
     animation: rollSpin 0.7s linear infinite;
   }
 
   /* Pat reaction: tiny lean forward. */
-  .mochi[data-anim="blush"] .sprite {
+  .mochi[data-anim="blush"] .body {
     animation: leanIn 0.7s ease-in-out infinite;
   }
 
   /* REQ-100 — expressive set (REQ-015) motion. Each pose is a single PNG, so
      a transform-only keyframe carries the movement the name promises. */
-  .mochi[data-anim="stretch"] .sprite {
+  .mochi[data-anim="stretch"] .body {
     animation: stretchUp 1.2s ease-in-out infinite;
   }
 
-  .mochi[data-anim="peek"] .sprite {
+  .mochi[data-anim="peek"] .body {
     animation: peekSide 1.4s ease-in-out infinite;
   }
 
-  .mochi[data-anim="tilt_head"] .sprite {
+  .mochi[data-anim="tilt_head"] .body {
     animation: tiltHold 1.6s ease-in-out infinite;
   }
 
-  .mochi[data-anim="shake"] .sprite {
+  .mochi[data-anim="shake"] .body {
     animation: shakeX 0.4s ease-in-out infinite;
   }
 
-  .mochi[data-anim="nuzzle"] .sprite {
+  .mochi[data-anim="nuzzle"] .body {
     animation: nuzzleIn 1.1s ease-in-out infinite;
   }
 
-  .mochi[data-anim="wiggle"] .sprite {
+  .mochi[data-anim="wiggle"] .body {
     animation: wiggle 0.45s ease-in-out infinite;
   }
 
-  .mochi[data-anim="dizzy"] .sprite {
+  .mochi[data-anim="dizzy"] .body {
     animation: dizzyWobble 0.9s linear infinite;
   }
 
-  .mochi[data-anim="surprise"] .sprite {
+  .mochi[data-anim="surprise"] .body {
     animation: surprisePop 0.55s ease-out infinite;
   }
 
@@ -562,35 +602,35 @@
   }
 
   /* Animation intensity 0 (REQ-113): no continuous motion at all. */
-  .mochi.still .sprite,
+  .mochi.still .body,
   .mochi.still .mark {
     animation: none !important;
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .mochi.breathe .sprite,
-    .mochi.asleep .sprite,
-    .mochi[data-anim="walk"] .sprite,
-    .mochi[data-anim="run"] .sprite,
-    .mochi[data-anim="jump"] .sprite,
-    .mochi[data-anim="celebrate"] .sprite,
-    .mochi[data-anim="eat"] .sprite,
-    .mochi[data-anim="eat_2"] .sprite,
-    .mochi[data-anim="eat_strawberry"] .sprite,
-    .mochi[data-anim="eat_strawberry_2"] .sprite,
-    .mochi[data-anim="eat_cookie"] .sprite,
-    .mochi[data-anim="eat_cookie_2"] .sprite,
-    .mochi[data-anim="yawn"] .sprite,
-    .mochi[data-anim="roll"] .sprite,
-    .mochi[data-anim="blush"] .sprite,
-    .mochi[data-anim="stretch"] .sprite,
-    .mochi[data-anim="peek"] .sprite,
-    .mochi[data-anim="tilt_head"] .sprite,
-    .mochi[data-anim="shake"] .sprite,
-    .mochi[data-anim="nuzzle"] .sprite,
-    .mochi[data-anim="wiggle"] .sprite,
-    .mochi[data-anim="dizzy"] .sprite,
-    .mochi[data-anim="surprise"] .sprite,
+    .mochi.breathe .body,
+    .mochi.asleep .body,
+    .mochi[data-anim="walk"] .body,
+    .mochi[data-anim="run"] .body,
+    .mochi[data-anim="jump"] .body,
+    .mochi[data-anim="celebrate"] .body,
+    .mochi[data-anim="eat"] .body,
+    .mochi[data-anim="eat_2"] .body,
+    .mochi[data-anim="eat_strawberry"] .body,
+    .mochi[data-anim="eat_strawberry_2"] .body,
+    .mochi[data-anim="eat_cookie"] .body,
+    .mochi[data-anim="eat_cookie_2"] .body,
+    .mochi[data-anim="yawn"] .body,
+    .mochi[data-anim="roll"] .body,
+    .mochi[data-anim="blush"] .body,
+    .mochi[data-anim="stretch"] .body,
+    .mochi[data-anim="peek"] .body,
+    .mochi[data-anim="tilt_head"] .body,
+    .mochi[data-anim="shake"] .body,
+    .mochi[data-anim="nuzzle"] .body,
+    .mochi[data-anim="wiggle"] .body,
+    .mochi[data-anim="dizzy"] .body,
+    .mochi[data-anim="surprise"] .body,
     .mark {
       animation: none !important;
     }

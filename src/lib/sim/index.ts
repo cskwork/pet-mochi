@@ -20,3 +20,5 @@ export * from "./notifications";
 export * from "./landing";
 export * from "./roam";
 export * from "./presence";
+export * from "./personality";
+export * from "./hover";

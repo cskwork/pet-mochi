@@ -1,3 +1,4 @@
+import { DEFAULT_PERSONALITY, type PersonalityParams } from "./personality";
 import { clamp, type PetState } from "./state";
 
 /**
@@ -5,7 +6,11 @@ import { clamp, type PetState } from "./state";
  * a new state. Decay rates are tuned for ~1-tick-per-3-seconds simulation; deltas
  * scale linearly with seconds elapsed so longer ticks behave reasonably.
  */
-export function applyDecay(state: PetState, elapsedSeconds: number): PetState {
+export function applyDecay(
+  state: PetState,
+  elapsedSeconds: number,
+  personality: PersonalityParams = DEFAULT_PERSONALITY,
+): PetState {
   if (elapsedSeconds <= 0) return state;
 
   // Per-second deltas. Tuned for tamagotchi-feel visibility — bars should
@@ -13,10 +18,12 @@ export function applyDecay(state: PetState, elapsedSeconds: number): PetState {
   // pet's needs change, not have to wait 25 minutes for one bar to move.
   const dHunger = 0.10 * elapsedSeconds;
   const asleep = state.currentAnimation === "sleep";
-  const dEnergy = asleep ? +0.5 * elapsedSeconds : -0.08 * elapsedSeconds;
+  const dEnergy = asleep
+    ? +0.5 * elapsedSeconds
+    : -0.08 * personality.energyDrainScale * elapsedSeconds;
   // Boredom is frozen while asleep — otherwise it climbs past the night-sleep
   // gate (boredom < 60) and breaks her sleep from the inside.
-  const dBoredom = asleep ? 0 : 0.10 * elapsedSeconds;
+  const dBoredom = asleep ? 0 : 0.10 * personality.boredomGainScale * elapsedSeconds;
   // Curiosity drifts toward a low baseline so the "?" mark eventually clears
   // when nothing novel happens. Above 60 it gently fades; below it slowly
   // builds back up — without this, curiosity ratchets upward forever and
