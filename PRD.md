@@ -1526,5 +1526,19 @@ live.
 by mood and personality; 20 s cooldown; never asleep, mid-action or while
 dragging; no LLM call, no sound.
 
+**REQ-132:** Needs pacing ("medium"). Awake rates: hunger 0.019/s, energy
+−0.011/s, boredom 0.032/s, so a curious pet is hungry ~30 min after a feed,
+tired ~60 min after waking, bored ~15 min after play. Personality multipliers
+apply on top; sleep recovery and away-decay unchanged.
+
+**REQ-133:** Settings honesty (§18). `startOnLogin` drives an OS login item
+via `tauri-plugin-autostart` from Rust (no JS capability), touched only when
+the toggle changes; failures reject the save. `petHomePath` is read-only and
+reports the resolved home (`MOCHI_HOME` moves it at launch).
+
+**REQ-134:** Diagnostic retention. `event_log` rows older than 30 days are
+pruned at startup; user data (interactions, memories, reports, reflections)
+is never auto-deleted.
+
 Acceptance: the four checks pass; `sim/` stays pure; no new capability
 widening; autonomous behavior stays silent (§27.2).

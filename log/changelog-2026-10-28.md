@@ -59,10 +59,22 @@ personality setting real and adds art-free customization.
 - Hover reaction (20 s cooldown, no LLM, no sound) and more hungry/lonely
   quirk variety.
 
+## Remaining items closed
+
+- **Needs pacing ("medium")** — hungry ~30 min after a feed (0.10 → 0.019/s),
+  tired ~60 min after waking (0.08 → 0.011/s), bored ~15 min after play
+  (0.10 → 0.032/s). Was 6 / 8 / 5 min.
+- **Start on login** works (`tauri-plugin-autostart` 2.5.1, Rust-side); the
+  OS login item changes only when the toggle is flipped, and a failure is
+  shown and reverted.
+- **Pet home folder** is shown read-only with the real path.
+- **`event_log` retention** — rows older than 30 days pruned at startup;
+  conversations and memories are never auto-deleted.
+
 ## Verification
 
 `npm test` 304 passed (was 255) · `npm run check` 0/0 ·
 `cargo +1.95.0 test --lib` 102 passed (was 79) · `cargo build` OK ·
 smoke-tested in `tauri dev` with an isolated `MOCHI_HOME`.
 
-Still open: see BACKLOG #23–#25.
+BACKLOG #23–#25 are resolved.
