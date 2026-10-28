@@ -5,16 +5,16 @@ pub mod llm;
 pub mod models;
 pub mod sandbox;
 pub mod state;
+mod startup;
 pub mod watcher;
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::db::Db;
 use crate::llm::ollama::OllamaProvider;
 use crate::models::{endpoint_is_loopback, Settings};
-use crate::sandbox::{default_pet_home, ensure_pet_home};
 use crate::state::AppState;
+use crate::startup::resolve_pet_home;
 use tauri::Manager;
 
 const SETTINGS_KEY: &str = "settings:v1";
@@ -23,18 +23,17 @@ const DB_FILE: &str = "mochi.db";
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let _ = env_logger::try_init();
+    let (pet_home, autostart_args) = resolve_pet_home().expect("could not resolve pet_home");
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .plugin({
-            let builder = tauri_plugin_autostart::Builder::new();
+            let builder = tauri_plugin_autostart::Builder::new().args(autostart_args.0.clone());
             #[cfg(target_os = "macos")]
             let builder = builder.macos_launcher(tauri_plugin_autostart::MacosLauncher::LaunchAgent);
             builder.build()
         })
-        .setup(|app| {
-            let pet_home = resolve_pet_home();
-            ensure_pet_home(&pet_home).expect("could not create pet_home");
-            let pet_home = pet_home.canonicalize().expect("could not resolve pet_home");
+        .manage(autostart_args)
+        .setup(move |app| {
             let db_path = pet_home.join(DB_FILE);
             let db = Arc::new(Db::open(&db_path).expect("could not open mochi.db"));
             if let Err(e) = db.prune_event_log_older_than(30) {
@@ -122,11 +121,4 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
-}
-
-fn resolve_pet_home() -> PathBuf {
-    if let Ok(env_path) = std::env::var("MOCHI_HOME") {
-        return PathBuf::from(env_path);
-    }
-    default_pet_home().unwrap_or_else(|_| PathBuf::from("./pet_home"))
 }

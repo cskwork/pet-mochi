@@ -100,6 +100,35 @@ pub fn save_settings(
             },
             |enabled| {
                 let (action, result) = if enabled {
+                    #[cfg(target_os = "linux")]
+                    {
+                        use tauri::Manager;
+                        let app_path = if let Some(appimage) = app
+                            .env()
+                            .appimage
+                            .and_then(|p| p.to_str().map(|s| s.to_string()))
+                        {
+                            appimage
+                        } else {
+                            std::env::current_exe()
+                                .map_err(|e| AppError::Autostart(format!("could not read executable path: {e}")))?
+                                .display()
+                                .to_string()
+                        };
+                        crate::startup::validate_linux_autostart(
+                            &app_path,
+                            &app.state::<crate::startup::AutostartArgs>().inner().0,
+                        )?;
+                    }
+                    // auto-launch 0.5 also writes the Windows Run value unquoted
+                    // (`{path} {args}`), so a spaced --mochi-home would split.
+                    #[cfg(windows)]
+                    {
+                        use tauri::Manager;
+                        crate::startup::validate_windows_autostart(
+                            &app.state::<crate::startup::AutostartArgs>().inner().0,
+                        )?;
+                    }
                     ("enable", manager.enable())
                 } else {
                     ("disable", manager.disable())
@@ -124,7 +153,7 @@ fn sync_start_on_login(
 fn save_settings_inner(
     state: &AppState,
     settings: Settings,
-    sync_login: impl FnOnce(bool) -> AppResult<()>,
+    mut sync_login: impl FnMut(bool) -> AppResult<()>,
 ) -> AppResult<Settings> {
     if settings.local_only_mode
         && settings.llm_provider == "ollama"
@@ -137,7 +166,7 @@ fn save_settings_inner(
 
     let mut to_persist = settings.clone();
     to_persist.cloud_api_key_set = false; // never persist this flag
-    // The running DB stays in AppState.pet_home. Moving it requires MOCHI_HOME at launch.
+    // The running DB stays in AppState.pet_home. Move it with MOCHI_HOME or --mochi-home at launch.
     to_persist.pet_home_path = None;
     // REQ-114 — clamp to the closed background list so an arbitrary string
     // can never reach the frontend's data attribute.
@@ -153,10 +182,19 @@ fn save_settings_inner(
     // Touch the OS login item only when the user flipped the toggle, so an
     // autostart error can't block unrelated saves (skin, name, …). Failures
     // reject the invoke before any settings or rename is saved.
-    if load_settings_raw(&state.db)?.start_on_login != to_persist.start_on_login {
+    let previous_start_on_login = load_settings_raw(&state.db)?.start_on_login;
+    let login_changed = previous_start_on_login != to_persist.start_on_login;
+    if login_changed {
         sync_login(to_persist.start_on_login)?;
     }
-    state.db.put_settings_and_rename_pet(SETTINGS_KEY, &json, PET_STATE_ID, &to_persist.pet_name)?;
+    if let Err(error) = state.db.put_settings_and_rename_pet(SETTINGS_KEY, &json, PET_STATE_ID, &to_persist.pet_name) {
+        if login_changed {
+            if let Err(rollback_error) = sync_login(previous_start_on_login) {
+                log::warn!("could not restore start on login after settings save failed: {rollback_error}");
+            }
+        }
+        return Err(error);
+    }
 
     // Re-bind the LLM provider so the new endpoint/model takes effect immediately
     // and so toggling provider to "none" clears the slot.
@@ -221,10 +259,112 @@ pub fn list_skills(_state: State<'_, AppState>) -> AppResult<Vec<SkillManifest>>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
 
     fn app_state() -> AppState {
         AppState::new(Arc::new(Db::open_in_memory().unwrap()), std::path::PathBuf::new())
+    }
+
+    fn rename_failure_state(start_on_login: bool) -> (tempfile::TempDir, AppState) {
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join("settings-test.db");
+        let state = AppState::new(Arc::new(Db::open(&path).unwrap()), home.path().to_path_buf());
+        let mut previous = Settings::default();
+        previous.start_on_login = start_on_login;
+        save_settings_inner(&state, previous, |_| Ok(())).unwrap();
+        load_or_init_pet_state(&state.db).unwrap();
+        rusqlite::Connection::open(&path).unwrap().execute_batch(
+            "CREATE TRIGGER reject_pet_rename BEFORE UPDATE OF name ON pet_state
+             BEGIN SELECT RAISE(ABORT, 'test rename rejected'); END;",
+        ).unwrap();
+        (home, state)
+    }
+
+    fn assert_failed_save_unchanged(
+        state: &AppState,
+        previous_settings: &Option<String>,
+        previous_pet: &PetState,
+        previous_provider: &Arc<dyn LlmProvider>,
+    ) {
+        assert_eq!(&state.db.get_setting(SETTINGS_KEY).unwrap(), previous_settings);
+        assert_eq!(
+            serde_json::to_value(state.db.load_pet_state(PET_STATE_ID).unwrap().unwrap()).unwrap(),
+            serde_json::to_value(previous_pet).unwrap(),
+        );
+        assert!(Arc::ptr_eq(state.llm.read().as_ref().unwrap(), previous_provider));
+    }
+
+    #[test]
+    fn settings_persistence_failure_restores_login_toggle_in_both_directions() {
+        for previous_enabled in [false, true] {
+            let (_home, state) = rename_failure_state(previous_enabled);
+            let previous_settings = state.db.get_setting(SETTINGS_KEY).unwrap();
+            let previous_pet = load_or_init_pet_state(&state.db).unwrap();
+            let previous_provider = state.llm.read().as_ref().unwrap().clone();
+            let os_enabled = Cell::new(previous_enabled);
+            let sync_calls = RefCell::new(Vec::new());
+            let mut settings = load_settings_raw(&state.db).unwrap();
+            settings.start_on_login = !previous_enabled;
+            settings.pet_name = "Must not rename".into();
+            settings.llm_provider = "none".into();
+
+            let err = save_settings_inner(&state, settings, |enabled| {
+                sync_calls.borrow_mut().push(enabled);
+                os_enabled.set(enabled);
+                Ok(())
+            }).unwrap_err();
+
+            assert!(matches!(&err, AppError::Db(_)));
+            assert!(err.to_string().contains("test rename rejected"));
+            assert_eq!(*sync_calls.borrow(), [!previous_enabled, previous_enabled]);
+            assert_eq!(os_enabled.get(), previous_enabled);
+            assert_failed_save_unchanged(&state, &previous_settings, &previous_pet, &previous_provider);
+        }
+    }
+
+    #[test]
+    fn settings_rollback_failure_preserves_original_database_error() {
+        let (_home, state) = rename_failure_state(false);
+        let previous_settings = state.db.get_setting(SETTINGS_KEY).unwrap();
+        let previous_pet = load_or_init_pet_state(&state.db).unwrap();
+        let previous_provider = state.llm.read().as_ref().unwrap().clone();
+        let sync_calls = RefCell::new(Vec::new());
+        let mut settings = load_settings_raw(&state.db).unwrap();
+        settings.start_on_login = true;
+        settings.pet_name = "Must not rename".into();
+        settings.llm_provider = "none".into();
+
+        let err = save_settings_inner(&state, settings, |enabled| {
+            sync_calls.borrow_mut().push(enabled);
+            if enabled { Ok(()) } else { Err(AppError::Autostart("rollback rejected".into())) }
+        }).unwrap_err();
+
+        assert!(matches!(&err, AppError::Db(_)));
+        assert!(err.to_string().contains("test rename rejected"));
+        assert!(!err.to_string().contains("rollback rejected"));
+        assert_eq!(*sync_calls.borrow(), [true, false]);
+        assert_failed_save_unchanged(&state, &previous_settings, &previous_pet, &previous_provider);
+    }
+
+    #[test]
+    fn unchanged_login_toggle_skips_sync_even_when_persistence_fails() {
+        for previous_enabled in [false, true] {
+            let (_home, state) = rename_failure_state(previous_enabled);
+            let previous_settings = state.db.get_setting(SETTINGS_KEY).unwrap();
+            let previous_pet = load_or_init_pet_state(&state.db).unwrap();
+            let previous_provider = state.llm.read().as_ref().unwrap().clone();
+            let mut settings = load_settings_raw(&state.db).unwrap();
+            settings.pet_name = "Must not rename".into();
+            settings.llm_provider = "none".into();
+
+            let err = save_settings_inner(&state, settings, |_| {
+                panic!("unchanged toggle must not query or update autostart")
+            }).unwrap_err();
+
+            assert!(matches!(&err, AppError::Db(_)));
+            assert!(err.to_string().contains("test rename rejected"));
+            assert_failed_save_unchanged(&state, &previous_settings, &previous_pet, &previous_provider);
+        }
     }
 
     #[test]
