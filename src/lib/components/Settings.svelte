@@ -17,6 +17,7 @@
     SKIN_LABELS,
     SKIN_SWATCHES,
   } from "./appearance";
+  import { createSettingsSaver, createStatusLine, errorMessage } from "./settingsSave";
 
   let settings = $state<Settings | null>(null);
   let memories = $state<Memory[]>([]);
@@ -28,6 +29,18 @@
   let recentReports = $state<StatusReport[]>([]);
   let runningReport = $state(false);
   let savingMessage = $state("");
+  // One timer for the status line: a newer message cancels the older clear.
+  const status = createStatusLine((m) => (savingMessage = m));
+  // Inline, next to the checkbox (the global status sits far below it).
+  let startOnLoginError = $state<string | null>(null);
+  const saver = createSettingsSaver<Settings>({
+    read: () => (settings ? $state.snapshot(settings) : null),
+    write: (next) => (settings = next),
+    send: (snapshot) => api.saveSettings(snapshot),
+    // REQ-113 — broadcast the persisted values so the pet overlay follows
+    // live. Best-effort.
+    onSaved: (echo) => void emit("settings:changed", echo).catch(() => undefined),
+  });
   let exportPath = $state<string | null>(null);
   let activeTab = $state<"general" | "memory" | "sandbox" | "developer">("general");
   let loadError = $state<string | null>(null);
@@ -36,8 +49,7 @@
   let approvedSummary = $state<{ name: string; text: string } | null>(null);
 
   function showError(prefix: string, e: unknown) {
-    const msg = (e as Error)?.message ?? String(e);
-    actionError = `${prefix}: ${msg}`;
+    actionError = `${prefix}: ${errorMessage(e)}`;
     setTimeout(() => (actionError = null), 4_000);
   }
 
@@ -96,35 +108,31 @@
     return () => {
       document.body.classList.remove("settings-page");
       window.removeEventListener("focus", onFocus);
+      status.dispose();
     };
   });
 
-  /** Save and broadcast; resolves false (message already shown) on failure. */
-  async function save(): Promise<boolean> {
-    if (!settings) return false;
-    savingMessage = "saving…";
-    let ok = false;
-    try {
-      settings = await api.saveSettings(settings);
-      savingMessage = "saved ✓";
-      ok = true;
-      // REQ-113 — broadcast so the pet overlay picks up e.g. animation
-      // intensity without a restart. Best-effort.
-      void emit("settings:changed", settings).catch(() => undefined);
-    } catch (e) {
-      // Tauri rejects with the backend's message string, not an Error.
-      savingMessage = `error: ${(e as Error)?.message ?? String(e)}`;
-    }
-    setTimeout(() => (savingMessage = ""), ok ? 2_000 : 5_000);
-    return ok;
+  /** Save (serialized) and broadcast. Every checkbox/select saves on change
+   *  and every text input on change/blur; the Save button is a fallback.
+   *  Resolves to null on success or the backend's error message. */
+  async function save(): Promise<string | null> {
+    if (!settings) return "settings not loaded";
+    status.show("saving…");
+    const err = await saver.save();
+    if (err === null) status.show("saved ✓", 2_000);
+    else status.show(`error: ${err}`, 5_000);
+    return err;
   }
 
   /** The backend registers/unregisters a real login item on save; if that
-   *  fails, show its message and put the checkbox back. */
+   *  fails, show its message inline and put the checkbox back. */
   async function onStartOnLoginChange() {
     if (!settings) return;
     const wanted = settings.startOnLogin;
-    if (!(await save()) && settings) {
+    startOnLoginError = null;
+    const err = await save();
+    if (err !== null && settings) {
+      startOnLoginError = err;
       settings = { ...settings, startOnLogin: !wanted };
     }
   }
@@ -135,11 +143,10 @@
       const isSet = await api.setCloudApiKey(pendingApiKey || null);
       settings = { ...settings, cloudApiKeySet: isSet };
       pendingApiKey = "";
-      savingMessage = isSet ? "key saved ✓" : "key cleared ✓";
+      status.show(isSet ? "key saved ✓" : "key cleared ✓", 2_000);
     } catch (e) {
       showError("save key", e);
     }
-    setTimeout(() => (savingMessage = ""), 2_000);
   }
 
   async function clearApiKey() {
@@ -382,18 +389,22 @@
         </fieldset>
         <label>
           LLM provider
-          <select bind:value={settings.llmProvider}>
+          <select bind:value={settings.llmProvider} onchange={save}>
             <option value="ollama">Ollama (local)</option>
             <option value="none">None — silent mode</option>
           </select>
         </label>
         <label>
           Ollama endpoint
-          <input bind:value={settings.ollamaEndpoint} placeholder="http://localhost:11434" />
+          <input
+            bind:value={settings.ollamaEndpoint}
+            onchange={save}
+            placeholder="http://localhost:11434"
+          />
         </label>
         <label>
           Ollama model
-          <input bind:value={settings.ollamaModel} placeholder="gemma4:e2b" />
+          <input bind:value={settings.ollamaModel} onchange={save} placeholder="gemma4:e2b" />
         </label>
 
         <fieldset>
@@ -417,11 +428,11 @@
         </fieldset>
 
         <label class="row">
-          <input type="checkbox" bind:checked={settings.localOnlyMode} />
+          <input type="checkbox" bind:checked={settings.localOnlyMode} onchange={save} />
           Local-only mode (block any cloud calls)
         </label>
         <label class="row">
-          <input type="checkbox" bind:checked={settings.autonomousSpeech} />
+          <input type="checkbox" bind:checked={settings.autonomousSpeech} onchange={save} />
           Allow autonomous chat bubbles
         </label>
         <label class="row">
@@ -437,7 +448,7 @@
           Desktop notifications (critical needs only)
         </label>
         <label class="row">
-          <input type="checkbox" bind:checked={settings.memoryEnabled} />
+          <input type="checkbox" bind:checked={settings.memoryEnabled} onchange={save} />
           Memory enabled
         </label>
         <label class="row">
@@ -449,9 +460,15 @@
             type="checkbox"
             bind:checked={settings.startOnLogin}
             onchange={onStartOnLoginChange}
+            aria-describedby={startOnLoginError ? "start-on-login-error" : undefined}
           />
           Start on login
         </label>
+        {#if startOnLoginError}
+          <p class="inline-error" id="start-on-login-error" role="alert">
+            Couldn't change start on login: {startOnLoginError}
+          </p>
+        {/if}
         <label>
           Animation intensity
           <input
@@ -491,11 +508,11 @@
           </span>
         </label>
         <label class="row">
-          <input type="checkbox" bind:checked={settings.developerEventLog} />
+          <input type="checkbox" bind:checked={settings.developerEventLog} onchange={save} />
           Developer event log
         </label>
         <div class="actions">
-          <button onclick={save}>Save</button>
+          <button onclick={() => void save()}>Save</button>
           <span class="status" role={savingMessage.startsWith("error") ? "alert" : "status"} aria-live="polite">{savingMessage}</span>
         </div>
       </section>
@@ -504,7 +521,7 @@
     {#if activeTab === "memory"}
       <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
       <section id="panel-memory" role="tabpanel" aria-labelledby="tab-memory">
-        <h3>Keepsake shelf</h3>
+        <h2>Keepsake shelf</h2>
         <p class="hint">
           Little gifts Mochi leaves when she feels well cared for (PRD §27.5).
         </p>
@@ -531,7 +548,7 @@
           </ul>
         {/if}
 
-        <h3>Memories</h3>
+        <h2>Memories</h2>
         <p class="hint">
           Memories live in your local SQLite database. They are private until you export or share them.
         </p>
@@ -601,7 +618,7 @@
             <p>{approvedSummary.text}</p>
           </div>
         {/if}
-        <h3>Recent status reports</h3>
+        <h2>Recent status reports</h2>
         <p class="hint">
           Mochi writes one of these roughly every 12 hours during an idle
           window — see PRD §9.8. Files land under your pet home folder's
@@ -763,6 +780,14 @@
     font-size: 12px;
     color: #6a5a6a;
   }
+  .inline-error {
+    margin: -4px 0 0 24px;
+    padding: 6px 8px;
+    border-radius: 8px;
+    background: #fff4d4;
+    color: #6b4f00;
+    font-size: 12px;
+  }
   .readonly-path {
     background: #f6eef1;
     color: #4a3a4a;
@@ -855,7 +880,7 @@
     margin: 0;
     font-size: 12px;
   }
-  h3 {
+  h2 {
     margin: 6px 0 0;
     font-size: 14px;
   }

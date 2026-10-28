@@ -13,7 +13,7 @@ export const SNACK_TRAY_TIMEOUT_MS = 8_000;
 export const SNACK_TRAY_W = 232;
 export const SNACK_TRAY_H = 66;
 
-export function createSnackTray() {
+export function createSnackTray(opts: { trigger?: () => HTMLElement | null } = {}) {
   let open = $state(false);
   let trayEl = $state<HTMLDivElement | null>(null);
   // Plain on purpose — no template read; consulted on snack picks and on the
@@ -45,7 +45,12 @@ export function createSnackTray() {
   }
 
   function onKey(e: KeyboardEvent) {
-    if (e.key === "Escape") close();
+    if (e.key === "Escape") {
+      close();
+      // Keyboard users go back to the Feed button that opened the tray
+      // instead of falling to <body>.
+      opts.trigger?.()?.focus();
+    }
   }
 
   function isFavoriteDiscovered(): boolean {

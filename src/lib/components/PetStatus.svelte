@@ -102,7 +102,7 @@
     type="button"
     class="status-chip"
     onclick={() => onToggle?.()}
-    aria-label="Show status"
+    aria-label="{pet.mood} — show status"
     title="Show {pet.name}'s status"
   >
     <span class="chip-icon" aria-hidden="true">📊</span>
@@ -143,7 +143,8 @@
     text-transform: capitalize;
   }
   .bond {
-    color: #c0567a;
+    /* ≥ 4.5:1 on the white panel at 10px (was #c0567a, 4.33:1). */
+    color: #b04a70;
     font-size: 10px;
   }
   .saving {

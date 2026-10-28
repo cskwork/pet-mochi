@@ -10,6 +10,8 @@
     deriveTimeOfDay,
     nextWanderPosition,
     findSafeStartPosition,
+    anchorForResize,
+    clampIntoView,
     newPetState,
     runTick,
     applyAction,
@@ -77,6 +79,8 @@
     type PetAccessory,
     type PetSkin,
   } from "./appearance";
+  import { placeBubble } from "./placement";
+  import { isContextMenuKey, menuKeyTarget } from "./menuNav";
 
   // Settings → Appearance / Personality, applied live (settings:changed).
   let petScale = $state(1);
@@ -87,6 +91,12 @@
   let personality = $state(personalityFor("curious"));
   // Overlay size at launch (tauri.conf.json); grown only to fit a big pet.
   let baseWindowSize: { width: number; height: number } | null = null;
+  // True while fitWindowToPet awaits setSize/setPosition: onResize must not
+  // re-place the pet mid-fit (the fit places her once, at the end).
+  let fittingWindow = false;
+  let fitChain: Promise<void> = Promise.resolve();
+  // Pet size that `position` currently corresponds to (feet anchoring).
+  let placedPetSize = BASE_PET_SIZE;
   // Hover reaction (USER_HOVERED_PET) edge + cooldown stamp.
   let cursorOverPet = false;
   let lastHoverAt: number | null = null;
@@ -155,7 +165,10 @@
   let lastQuirkAt: number | null = null;
   // REQ-107 snack tray + favorite discovery — state machine lives in
   // snackTray.svelte.ts (REQ-124.2).
-  const snack = createSnackTray();
+  const snack = createSnackTray({
+    trigger: () =>
+      document.querySelector<HTMLElement>('.actions-anchor [aria-haspopup="menu"]'),
+  });
   // REQ-109 keepsakes / REQ-110 hatch-day — runtime flags live in
   // gifts.svelte.ts (REQ-124.2). Celebrations drive Pet-owned channels.
   const gifts = createGifts({
@@ -615,39 +628,20 @@
     petScale = Number.isFinite(scale) ? scale : 1;
     const after = petSize;
     if (after === before) return;
-    if (positionInitialised) {
-      movePet(
-        { x: position.x - (after - before) / 2, y: position.y - (after - before) },
-        false,
-      );
-      keepPetInView();
-    }
-    void fitWindowToPet();
+    // Serialized: a second slider change waits for the first fit, so each
+    // fit computes its delta from the viewport the previous one set.
+    fitChain = fitChain.then(fitWindowToPet, fitWindowToPet);
   }
 
-  /** Clamp the pet into the viewport and out from under the panels. */
+  /** Clamp the pet into the viewport and out from under the panels (pure
+   *  geometry in sim/movement.ts: smallest slide first, safe cell last). */
   function keepPetInView() {
-    if (!positionInitialised) return;
-    const maxX = Math.max(0, viewportSize.width - petSize);
-    const maxY = Math.max(0, viewportSize.height - petSize);
-    const clamped = {
-      x: Math.min(maxX, Math.max(0, position.x)),
-      y: Math.min(maxY, Math.max(0, position.y)),
-    };
-    const obs = currentObstacles();
-    const overlaps = obs.some(
-      (o) =>
-        clamped.x < o.right &&
-        clamped.x + petSize > o.left &&
-        clamped.y < o.bottom &&
-        clamped.y + petSize > o.top,
+    if (!positionInitialised || fittingWindow) return;
+    const next = clampIntoView(
+      position,
+      { width: viewportSize.width, height: viewportSize.height, petSize },
+      currentObstacles(),
     );
-    const next = overlaps
-      ? findSafeStartPosition(
-          { width: viewportSize.width, height: viewportSize.height, petSize },
-          obs,
-        )
-      : clamped;
     if (next.x !== position.x || next.y !== position.y) movePet(next, false);
   }
 
@@ -659,25 +653,48 @@
    * where the actions panel and usually Mochi sit — stays where it was.
    */
   async function fitWindowToPet() {
-    if (!api.hasBackend || !baseWindowSize) return;
-    const targetH = baseWindowSize.height + Math.max(0, petSize - BASE_PET_SIZE);
+    // The size her current position was laid out for (not the size at the
+    // moment the slider moved), so queued fits chain correctly.
+    const beforeSize = placedPetSize;
+    const afterSize = petSize;
+    const targetH =
+      api.hasBackend && baseWindowSize
+        ? baseWindowSize.height + Math.max(0, afterSize - BASE_PET_SIZE)
+        : viewportSize.height;
     const delta = targetH - viewportSize.height;
-    if (delta === 0) return;
+    // The pet is re-placed once, against the size we set ourselves, so the
+    // result can't depend on when the window `resize` event arrives (QA: a
+    // late event left a stale 360px viewport and threw her to (0,0)).
+    const place = (deltaH: number) => {
+      if (!positionInitialised) return;
+      const next = clampIntoView(
+        anchorForResize(position, beforeSize, afterSize, deltaH),
+        { width: viewportSize.width, height: viewportSize.height, petSize: afterSize },
+        currentObstacles(),
+      );
+      movePet(next, false);
+      placedPetSize = afterSize;
+    };
+    if (delta === 0 || !baseWindowSize) {
+      place(0);
+      return;
+    }
+    fittingWindow = true;
     try {
       const w = getCurrentWindow();
       const pos = await w.outerPosition();
       const sf = cachedScaleFactor || 1;
       await w.setSize(new LogicalSize(baseWindowSize.width, targetH));
       await w.setPosition(new PhysicalPosition(pos.x, pos.y - Math.round(delta * sf)));
-      // Same on-screen spot inside the taller/shorter window.
-      movePet({ x: position.x, y: position.y + delta }, false);
-      // onResize may already have re-placed her during the awaits above, so
-      // the offset can land on a panel — clamp once more.
-      keepPetInView();
+      viewportSize = { width: baseWindowSize.width, height: targetH };
+      fittingWindow = false;
+      place(delta);
       roam.invalidate();
       invalidateWinPos();
     } catch (err) {
       console.warn("resizing overlay for pet size failed", err);
+      fittingWindow = false;
+      place(0);
     }
   }
 
@@ -1179,16 +1196,43 @@
   // Two items now: Settings… + Close Mochi (REQ-115).
   const MENU_H = 76;
 
-  function openContextMenu(e: MouseEvent) {
-    e.preventDefault();
-    const x = Math.min(viewportSize.width - MENU_W - 4, Math.max(4, e.clientX));
-    const y = Math.min(viewportSize.height - MENU_H - 4, Math.max(4, e.clientY));
+  let menuEl = $state<HTMLDivElement | null>(null);
+  // A keyboard-opened menu may be followed by the browser's own contextmenu
+  // event for the same key press; ignore that echo.
+  let menuOpenedByKeyAt = 0;
+
+  function menuItems(): HTMLButtonElement[] {
+    return Array.from(menuEl?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? []);
+  }
+
+  function openMenuAt(clientX: number, clientY: number) {
+    const x = Math.min(viewportSize.width - MENU_W - 4, Math.max(4, clientX));
+    const y = Math.min(viewportSize.height - MENU_H - 4, Math.max(4, clientY));
     menuPos = { x, y };
     menuOpen = true;
+    // Focus the first item so Escape/arrows work immediately (a11y).
+    requestAnimationFrame(() => menuItems()[0]?.focus());
+  }
+
+  function openContextMenu(e: MouseEvent) {
+    e.preventDefault();
+    if (Date.now() - menuOpenedByKeyAt < 400) return;
+    openMenuAt(e.clientX, e.clientY);
+  }
+
+  /** ContextMenu key / Shift+F10 on the focused pet opens the menu. */
+  function onPetKeyDown(e: KeyboardEvent) {
+    if (!isContextMenuKey(e)) return;
+    e.preventDefault();
+    menuOpenedByKeyAt = Date.now();
+    openMenuAt(position.x + petSize / 2, position.y + petSize / 2);
   }
 
   function closeContextMenu() {
+    if (!menuOpen) return;
     menuOpen = false;
+    // Return focus to the pet (the menu's invoker).
+    petEl?.focus();
   }
 
   async function quitApp() {
@@ -1218,55 +1262,35 @@
   }
 
   function onMenuKey(e: KeyboardEvent) {
-    if (e.key === "Escape") closeContextMenu();
+    const items = menuItems();
+    const current = items.indexOf(document.activeElement as HTMLButtonElement);
+    const action = menuKeyTarget(e.key, current, items.length);
+    if (!action) return;
+    e.preventDefault();
+    if (action.type === "close") closeContextMenu();
+    else items[action.index]?.focus();
   }
 
   // Place the bubble so it never falls behind the status pill or the actions
-  // panel. Default: above the pet. Flip below if above would clip the
-  // viewport top OR overlap the status strip. If "below" would overlap the
-  // actions panel, fall back to above and accept a touch of clipping rather
+  // panel (pure logic in placement.ts). Default: above the pet. Flip below if
+  // above would clip the viewport top OR overlap the status strip. If neither
+  // side fits, clamp into the free band (may overlap the pet's head) rather
   // than hide the dialogue entirely.
-  let bubblePlacement = $derived.by(() => {
-    const centerX = position.x + petSize / 2;
-
-    // Vertical bounds the bubble must respect.
-    const status = statusBox();
-    const actions = actionsBox();
-    const topClear   = Math.max(BUBBLE_MARGIN, status.bottom + BUBBLE_GAP);
-    const bottomClear = Math.min(viewportSize.height - BUBBLE_MARGIN, actions.top - BUBBLE_GAP);
-
-    const aboveTop = position.y - BUBBLE_H - BUBBLE_GAP;
-    const belowTop = position.y + petSize + BUBBLE_GAP;
-
-    const aboveFits = aboveTop >= topClear;
-    const belowFits = belowTop + BUBBLE_H <= bottomClear;
-
-    let placeBelow: boolean;
-    let top: number;
-    if (aboveFits) {
-      placeBelow = false;
-      top = aboveTop;
-    } else if (belowFits) {
-      placeBelow = true;
-      top = belowTop;
-    } else {
-      // Neither side fully clears; pick the side with the most room.
-      const aboveRoom = position.y - topClear;
-      const belowRoom = bottomClear - (position.y + petSize);
-      placeBelow = belowRoom > aboveRoom;
-      top = placeBelow
-        ? Math.max(belowTop, bottomClear - BUBBLE_H)
-        : Math.min(aboveTop, topClear);
-    }
-
-    let left = centerX - BUBBLE_W / 2;
-    left = Math.max(
-      BUBBLE_MARGIN,
-      Math.min(viewportSize.width - BUBBLE_W - BUBBLE_MARGIN, left),
-    );
-    const tailX = Math.max(TAIL_INSET, Math.min(BUBBLE_W - TAIL_INSET, centerX - left));
-    return { left, top, side: (placeBelow ? "below" : "above") as "above" | "below", tailX };
-  });
+  let bubblePlacement = $derived(
+    placeBubble({
+      pet: { x: position.x, y: position.y, size: petSize },
+      viewport: viewportSize,
+      status: statusBox(),
+      actions: actionsBox(),
+      layout: {
+        bubbleW: BUBBLE_W,
+        bubbleH: BUBBLE_H,
+        margin: BUBBLE_MARGIN,
+        gap: BUBBLE_GAP,
+        tailInset: TAIL_INSET,
+      },
+    }),
+  );
 
   // Consent prompt placement. Try below the pet first; flip above if there's
   // no room (e.g., the pet is near the bottom of the viewport). Avoids the
@@ -1535,6 +1559,7 @@
         false,
       );
       positionInitialised = true;
+      placedPetSize = petSize;
     }
 
     lastTickAt = Date.now();
@@ -1772,7 +1797,10 @@
     }}
     onclick={onPetClick}
     oncontextmenu={openContextMenu}
-    aria-label="Mochi"
+    onkeydown={onPetKeyDown}
+    aria-label={pet.name}
+    aria-haspopup="menu"
+    aria-expanded={menuOpen}
   >
     <MochiSprite
       mood={pet.mood}
@@ -1877,12 +1905,15 @@
       type="button"
       class="menu-scrim"
       aria-label="Close menu"
+      tabindex="-1"
       onclick={closeContextMenu}
       oncontextmenu={(e) => { e.preventDefault(); closeContextMenu(); }}
     ></button>
     <div
       class="context-menu"
       role="menu"
+      aria-label="Mochi menu"
+      bind:this={menuEl}
       style="left: {menuPos.x}px; top: {menuPos.y}px; width: {MENU_W}px;"
       tabindex="-1"
       onkeydown={onMenuKey}

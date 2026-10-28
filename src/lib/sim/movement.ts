@@ -144,3 +144,48 @@ export function findSafeStartPosition(
   // No safe cell — return center anyway.
   return center;
 }
+
+/**
+ * Where the pet goes when her size and/or the window height change: her feet
+ * (bottom-center) stay on the same screen spot. `deltaHeight` is how much the
+ * window grew (positive) or shrank; the window is shifted up by the same
+ * amount, so in-window y moves down by it. Pure — no clamping.
+ */
+export function anchorForResize(
+  pos: { x: number; y: number },
+  beforeSize: number,
+  afterSize: number,
+  deltaHeight: number,
+): { x: number; y: number } {
+  const d = afterSize - beforeSize;
+  return { x: pos.x - d / 2, y: pos.y - d + deltaHeight };
+}
+
+/**
+ * Clamp the pet into the viewport and out from under the obstacles with the
+ * smallest move: first clamp, then try sliding vertically to just below / just
+ * above each overlapping obstacle; only if that fails, fall back to
+ * {@link findSafeStartPosition}. Pure.
+ */
+export function clampIntoView(
+  pos: { x: number; y: number },
+  bounds: { width: number; height: number; petSize: number },
+  obstacles: readonly Obstacle[] = [],
+): { x: number; y: number } {
+  const size = bounds.petSize;
+  const maxX = Math.max(0, bounds.width - size);
+  const maxY = Math.max(0, bounds.height - size);
+  const x = clamp(pos.x, 0, maxX);
+  const y = clamp(pos.y, 0, maxY);
+  const overlapsAny = (cx: number, cy: number): boolean =>
+    obstacles.some((o) => rectsOverlap(cx, cy, size, size, o));
+  if (!overlapsAny(x, y)) return { x, y };
+  const candidates = obstacles
+    .flatMap((o) => [o.bottom, o.top - size])
+    .filter((cy) => cy >= 0 && cy <= maxY)
+    .sort((a, b) => Math.abs(a - y) - Math.abs(b - y));
+  for (const cy of candidates) {
+    if (!overlapsAny(x, cy)) return { x, y: cy };
+  }
+  return findSafeStartPosition(bounds, obstacles);
+}
