@@ -139,37 +139,6 @@ if (wake) {
 
 ---
 
-## MEDIUM #21 — Playwright e2e for §9.8 status report and §9.11 choreography
-
-**Files (would create)**
-- `tests/e2e/status-report.spec.ts` — boot app with mocked clock 12h+1m past
-  `lastReportAt`, send IDLE_TICK for 60s, assert a file appears under
-  `pet_home/dreams/` and the "Recent status reports" list populates.
-- `tests/e2e/choreography.spec.ts` — fire `USER_RETURNED` after 35-min absence,
-  assert sprite cycles through ≥2 distinct `MovementState` frames within 3s
-  and the bubble shows a closed-vocabulary token.
-- `playwright.config.ts` (new), `package.json` (`@playwright/test` devDep).
-
-**Why deferred**
-Tauri webview e2e cannot be driven by stock Playwright — it needs
-`tauri-driver` + `webdriverio`, and the dev-server preview path doesn't
-exercise the `#[tauri::command]` boundary that holds most of the new logic
-(REQ-070..076 + REQ-094..099). The simulation engine is already 100%
-covered by vitest (128 tests), and `cargo test --lib` covers the Rust
-side (75 tests). End-to-end value here is mostly the integration glue,
-which is small.
-
-**Suggested approach when picked up**
-1. Add `tauri-driver` (Rust binary) + `webdriverio` (Node) instead of
-   raw Playwright.
-2. Or, alternatively, add `@testing-library/svelte` integration tests
-   that mock `api.invoke` — covers ~80% of the gap at ~10% of the cost.
-3. The pure logic is already gated by `statusReportGate.test.ts` and
-   `choreography.test.ts`, so the e2e job is to verify wiring, not
-   correctness.
-
----
-
 ## MEDIUM #22 — Multi-monitor crossing disabled on mixed-DPI setups (REQ-121)
 
 **Files**
@@ -200,6 +169,21 @@ safe: a silent no-op, never a wrong-position window.
    adjacency + clamped y in physical space).
 3. Re-verify the 30s cache refresh converts window position through the
    *current* monitor's scale after a crossing.
+
+---
+
+## ✅ Resolved — #21 Playwright e2e
+
+- `npm run test:e2e` runs a Playwright suite (`tests/e2e/`, Chromium +
+  WebKit, CI job "E2E (Playwright)") against the real Svelte app on a fake
+  Tauri backend (`tests/e2e/harness.html` + `harness/backend.ts`, built on
+  `@tauri-apps/api/mocks`). It covers boot, care actions, needs pacing (fake
+  clock), hover cooldown, appearance, live resize, settings saving, keyboard
+  menus and axe checks — the release-QA scenarios from v0.3.0.
+- Not covered, by design: the `#[tauri::command]` boundary (the backend is a
+  fake; `cargo test --lib` owns it) and the original §9.8 status-report /
+  §9.11 choreography scenarios this entry proposed. Those still need
+  `tauri-driver` + `webdriverio` if the integration glue ever warrants it.
 
 ---
 

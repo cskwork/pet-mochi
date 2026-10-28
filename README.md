@@ -258,6 +258,7 @@ sandbox.
 
 ```bash
 npm test                                 # 332 frontend tests (vitest)
+npm run test:e2e                         # Playwright e2e on a fake backend (first: npx playwright install chromium webkit)
 cd src-tauri && cargo test --lib         # 127 backend tests (db, sandbox, llm, prompts, startup)
 ```
 

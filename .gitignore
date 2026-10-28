@@ -24,6 +24,12 @@ dist-ssr
 src-tauri/target/
 src-tauri/gen/schemas
 
+# Playwright e2e output
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+
 # Pet runtime data
 pet_home/
 *.db
