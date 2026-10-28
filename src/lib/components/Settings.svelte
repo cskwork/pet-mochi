@@ -131,6 +131,7 @@
    *  status and never alerts a second time. */
   function reportSave(res: Awaited<ReturnType<typeof saver.commit>>) {
     if (res.ok) status.show("saved ✓", 2_000);
+    else if (res.superseded) return; // a newer commit of the same field reports
     else if (res.keys.length > 0) status.show("not saved — see the field marked above", 5_000);
     else status.show(`error: ${res.error}`, 5_000);
   }
@@ -342,7 +343,7 @@
         <label>
           Pet name
           <input bind:value={settings.petName} onchange={() => saveFields("petName")}
-            oninput={() => saver.clearError("petName")}
+            oninput={() => saver.noteEdit("petName")}
             aria-invalid={fieldErrors.petName ? "true" : undefined}
             aria-describedby={describe("petName")} maxlength="24" />
         </label>
@@ -442,7 +443,7 @@
           <input
             bind:value={settings.ollamaEndpoint}
             onchange={() => saveFields("ollamaEndpoint")}
-            oninput={() => saver.clearError("ollamaEndpoint")}
+            oninput={() => saver.noteEdit("ollamaEndpoint")}
             aria-invalid={fieldErrors.ollamaEndpoint ? "true" : undefined}
             aria-describedby={describe("ollamaEndpoint")}
             placeholder="http://localhost:11434"
@@ -452,7 +453,7 @@
         <label>
           Ollama model
           <input bind:value={settings.ollamaModel} onchange={() => saveFields("ollamaModel")}
-            oninput={() => saver.clearError("ollamaModel")}
+            oninput={() => saver.noteEdit("ollamaModel")}
             aria-invalid={fieldErrors.ollamaModel ? "true" : undefined}
             aria-describedby={describe("ollamaModel")} placeholder="gemma4:e2b" />
         </label>

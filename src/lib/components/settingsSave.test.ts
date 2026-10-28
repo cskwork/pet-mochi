@@ -136,6 +136,114 @@ describe("createSettingsSaver — per-field commits", () => {
   });
 });
 
+type N = { petName: string; stage: string };
+
+/** Backend whose every call is settled by hand, to force overlap orders. */
+function manualBackend() {
+  const calls: Array<{
+    sent: N;
+    resolve: (v: N) => void;
+    reject: (e: unknown) => void;
+  }> = [];
+  const send = (full: N) =>
+    new Promise<N>((resolve, reject) => calls.push({ sent: { ...full }, resolve, reject }));
+  return { send, calls };
+}
+
+function setupManual() {
+  let local: N = { petName: "Mochi", stage: "transparent" };
+  let errors: Record<string, string> = {};
+  const backend = manualBackend();
+  const saver = createSettingsSaver<N>({
+    read: () => ({ ...local }),
+    write: (n) => (local = n),
+    send: backend.send,
+    onSaved: () => undefined,
+    onErrors: (e) => (errors = e),
+  });
+  saver.init({ ...local });
+  return {
+    saver,
+    backend,
+    get local() {
+      return local;
+    },
+    set local(v: N) {
+      local = v;
+    },
+    get errors() {
+      return errors;
+    },
+  };
+}
+
+async function waitCalls(t: ReturnType<typeof setupManual>, n: number) {
+  await vi.waitFor(() => expect(t.backend.calls.length).toBe(n));
+}
+
+describe("createSettingsSaver — overlapping commits of the same field", () => {
+  it("(a) fail-then-succeed: the form ends on the saved value with no error", async () => {
+    const t = setupManual();
+    t.saver.noteEdit("petName");
+    t.local = { ...t.local, petName: "Momo" };
+    const auto = t.saver.commit("petName"); // blur auto-save, in flight
+    await waitCalls(t, 1);
+    const button = t.saver.commitDirty(); // Save pressed: same field, same value
+    t.backend.calls[0].reject("disk busy");
+    const r1 = await auto;
+    expect(r1).toMatchObject({ ok: false, superseded: true });
+    expect(t.local.petName).toBe("Momo"); // no rollback: a newer commit owns it
+    expect(t.errors).toEqual({});
+    await waitCalls(t, 2);
+    expect(t.backend.calls[1].sent.petName).toBe("Momo");
+    t.backend.calls[1].resolve({ ...t.backend.calls[1].sent });
+    expect(await button).toEqual({ ok: true }); // → "saved ✓"
+    expect(t.local.petName).toBe("Momo");
+    expect(t.errors).toEqual({});
+  });
+
+  it("(b) fail-then-fail: reverted to the persisted value with the error", async () => {
+    const t = setupManual();
+    t.local = { ...t.local, petName: "Momo" };
+    const auto = t.saver.commit("petName");
+    await waitCalls(t, 1);
+    const button = t.saver.commitDirty();
+    t.backend.calls[0].reject("disk busy");
+    await auto;
+    await waitCalls(t, 2);
+    t.backend.calls[1].reject("still busy");
+    expect(await button).toMatchObject({ ok: false, keys: ["petName"] });
+    expect(t.local.petName).toBe("Mochi");
+    expect(t.errors).toEqual({ petName: "still busy" });
+  });
+
+  it("(c) an edit after the enqueue survives either outcome", async () => {
+    for (const outcome of ["resolve", "reject"] as const) {
+      const t = setupManual();
+      t.local = { ...t.local, petName: "Momo" };
+      const auto = t.saver.commit("petName");
+      await waitCalls(t, 1);
+      t.saver.noteEdit("petName"); // user keeps typing, not blurred yet
+      t.local = { ...t.local, petName: "Momoko" };
+      if (outcome === "resolve") t.backend.calls[0].resolve({ ...t.backend.calls[0].sent });
+      else t.backend.calls[0].reject("nope");
+      await auto;
+      expect(t.local.petName, outcome).toBe("Momoko");
+      expect(t.errors, outcome).toEqual({});
+    }
+  });
+
+  it("an unrelated field still follows the echo while another commit is pending", async () => {
+    const t = setupManual();
+    t.local = { ...t.local, stage: "cream" };
+    const first = t.saver.commit("stage");
+    await waitCalls(t, 1);
+    t.backend.calls[0].resolve({ ...t.backend.calls[0].sent, stage: "cream" });
+    expect(await first).toEqual({ ok: true });
+    expect(t.local.stage).toBe("cream");
+  });
+});
+
 describe("createStatusLine", () => {
   afterEach(() => vi.useRealTimers());
 

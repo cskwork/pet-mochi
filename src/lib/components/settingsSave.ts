@@ -24,7 +24,11 @@ export function errorMessage(e: unknown): string {
 
 export type FieldErrors = Record<string, string>;
 
-export type SaveResult = { ok: true } | { ok: false; error: string; keys: string[] };
+/** `superseded`: the save failed, but a newer commit/edit owns every field
+ *  in it, so this outcome changed nothing — the later commit reports. */
+export type SaveResult =
+  | { ok: true }
+  | { ok: false; error: string; keys: string[]; superseded?: boolean };
 
 export type SettingsSaverDeps<T extends object> = {
   /** Plain snapshot of the current local (form) settings, or null if not loaded. */
@@ -43,6 +47,24 @@ export function createSettingsSaver<T extends object>(deps: SettingsSaverDeps<T>
   let persisted: T | null = null;
   let errors: FieldErrors = {};
   let chain: Promise<unknown> = Promise.resolve();
+  // Per-field versioning, so an outcome only touches a field it still owns:
+  // `editVersion` bumps on every user edit (and every commit); `latestCommit`
+  // is the sequence number of the newest queued commit of that field;
+  // `pending` counts commits of that field still queued or in flight.
+  const editVersion: Record<string, number> = {};
+  const latestCommit: Record<string, number> = {};
+  const pending: Record<string, number> = {};
+  let seq = 0;
+
+  /** Stamp per committed field: the commit's sequence + the field version. */
+  type Stamp = Record<string, { seq: number; ver: number }>;
+
+  /** True when this commit is still the last word on `k`: no newer commit
+   *  was queued and the user hasn't edited the field since. */
+  function owns(k: string, stamp: Stamp): boolean {
+    const st = stamp[k];
+    return !!st && latestCommit[k] === st.seq && (editVersion[k] ?? 0) === st.ver;
+  }
 
   function setErrors(next: FieldErrors) {
     errors = next;
@@ -61,6 +83,13 @@ export function createSettingsSaver<T extends object>(deps: SettingsSaverDeps<T>
     if (persisted) persisted = { ...persisted, ...patch };
   }
 
+  /** A user edit (e.g. typing) that isn't committed yet: any in-flight
+   *  outcome for this field must leave it alone; its old error clears. */
+  function noteEdit(key: keyof T & string) {
+    editVersion[key] = (editVersion[key] ?? 0) + 1;
+    clearError(key);
+  }
+
   function clearError(key: keyof T & string) {
     if (!(key in errors)) return;
     const next = { ...errors };
@@ -68,7 +97,7 @@ export function createSettingsSaver<T extends object>(deps: SettingsSaverDeps<T>
     setErrors(next);
   }
 
-  async function run(patch: Partial<T>): Promise<SaveResult> {
+  async function run(patch: Partial<T>, stamp: Stamp): Promise<SaveResult> {
     const keys = Object.keys(patch);
     if (!persisted) return { ok: false, error: "settings not loaded", keys };
     const before = persisted;
@@ -80,38 +109,61 @@ export function createSettingsSaver<T extends object>(deps: SettingsSaverDeps<T>
       if (cur) {
         const next = { ...cur } as Record<string, unknown>;
         const e = echo as Record<string, unknown>;
-        const p = patch as Record<string, unknown>;
         const b = before as Record<string, unknown>;
         for (const k of Object.keys(e)) {
-          const untouched = k in p ? same(next[k], p[k]) : same(next[k], b[k]);
-          if (untouched) next[k] = e[k];
+          // Committed fields: adopt only while this commit still owns them.
+          // Other fields: follow the echo unless the user changed them or a
+          // commit for them is still pending.
+          const adopt =
+            k in stamp ? owns(k, stamp) : !(pending[k] > 0) && same(next[k], b[k]);
+          if (adopt) next[k] = e[k];
         }
         deps.write(next as T);
       }
       const nextErrors = { ...errors };
-      for (const k of keys) delete nextErrors[k];
+      for (const k of keys) if (owns(k, stamp)) delete nextErrors[k];
       setErrors(nextErrors);
       deps.onSaved(echo);
       return { ok: true };
     } catch (err) {
       const msg = errorMessage(err);
+      // Revert + flag only fields this commit still owns; a newer commit or
+      // edit of the same field decides its final value and error.
+      const owned = keys.filter((k) => owns(k, stamp));
       const cur = deps.read();
-      if (cur) {
+      if (cur && owned.length > 0) {
         const next = { ...cur } as Record<string, unknown>;
-        const p = patch as Record<string, unknown>;
         const b = before as Record<string, unknown>;
-        for (const k of keys) if (same(next[k], p[k])) next[k] = b[k];
+        for (const k of owned) next[k] = b[k];
         deps.write(next as T);
       }
-      const nextErrors = { ...errors };
-      for (const k of keys) nextErrors[k] = msg;
-      setErrors(nextErrors);
-      return { ok: false, error: msg, keys };
+      if (owned.length > 0) {
+        const nextErrors = { ...errors };
+        for (const k of owned) nextErrors[k] = msg;
+        setErrors(nextErrors);
+      }
+      return owned.length === 0 && keys.length > 0
+        ? { ok: false, error: msg, keys: owned, superseded: true }
+        : { ok: false, error: msg, keys: owned };
     }
   }
 
   function enqueue(patch: Partial<T>): Promise<SaveResult> {
-    const go = () => run(patch);
+    const stamp: Stamp = {};
+    seq += 1;
+    for (const k of Object.keys(patch)) {
+      editVersion[k] = (editVersion[k] ?? 0) + 1;
+      latestCommit[k] = seq;
+      pending[k] = (pending[k] ?? 0) + 1;
+      stamp[k] = { seq, ver: editVersion[k] };
+    }
+    const go = async () => {
+      try {
+        return await run(patch, stamp);
+      } finally {
+        for (const k of Object.keys(patch)) pending[k] -= 1;
+      }
+    };
     const p = chain.then(go, go);
     chain = p;
     return p;
@@ -138,7 +190,7 @@ export function createSettingsSaver<T extends object>(deps: SettingsSaverDeps<T>
     return commit(...keys);
   }
 
-  return { init, acknowledge, clearError, commit, commitDirty };
+  return { init, acknowledge, clearError, noteEdit, commit, commitDirty };
 }
 
 /** One status line with a single timer: a new message cancels the previous
