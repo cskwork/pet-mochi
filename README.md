@@ -11,7 +11,7 @@ optional local LLM. Works fully offline. No accounts. No cloud. No telemetry.
 [![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)](https://tauri.app)
 [![Svelte 5](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte&logoColor=white)](https://svelte.dev)
 [![Rust](https://img.shields.io/badge/Rust-1.77+-orange?logo=rust&logoColor=white)](https://www.rust-lang.org)
-[![Tests](https://img.shields.io/badge/tests-292%20passing-brightgreen)](#run-tests)
+[![Tests](https://img.shields.io/badge/tests-334%20passing-brightgreen)](#run-tests)
 
 <img src="public/sprites/mochi-celebrate.png" width="200" alt="Mochi celebrating" />
 
@@ -36,7 +36,7 @@ optional local LLM. Works fully offline. No accounts. No cloud. No telemetry.
   </tr>
 </table>
 
-<sub>14 hand-drawn poses + per-mood color tint + 4 distinguishing glyphs<br />(🍡 hungry · … bored · ♡ lonely · ? curious)</sub>
+<sub>28 hand-drawn sprite frames + per-mood color tint + 4 distinguishing glyphs<br />(🍡 hungry · … bored · ♡ lonely · ? curious)</sub>
 
 </div>
 
@@ -84,10 +84,10 @@ core experience.
 
 - **Lives as a transparent always-on-top overlay** — drag her anywhere on the
   desktop, click-through hit-testing keeps the rest of your screen usable.
-- **Animates 22 sprite states** — idle / walk / run / sleep / jump / sit /
+- **Animates 26 movement states** — idle / walk / run / sleep / jump / sit /
   look-cursor / hide / celebrate / eat / yawn / roll / blush plus the
   expressive set (stretch / peek / tilt-head / shake / nuzzle / wiggle /
-  dizzy / surprise), each with its own CSS motion.
+  dizzy / surprise) and snack-specific eating frames, each with its own CSS motion.
 - **Feels alive between interactions** — mood-weighted idle micro-quirks,
   squash-and-stretch juice on every press, and particle bursts (hearts,
   crumbs, confetti, z's) on care moments.
@@ -173,7 +173,7 @@ src-tauri/                 Rust backend
 │  ├─ llm/                 Provider trait, Ollama, prompts, cooldowns
 │  ├─ sandbox.rs           Pet home, safe file IO, skill manifests
 │  ├─ watcher.rs           notify-based inbox watcher
-│  ├─ commands.rs          Every #[tauri::command]
+│  ├─ commands/            Every #[tauri::command], split by domain
 │  ├─ state.rs             Shared AppState (Arc<Db>, LLM, cooldowns)
 │  └─ lib.rs               Tauri builder, plugin wiring, setup
 ```
@@ -227,7 +227,7 @@ sandbox.
 ### Run tests
 
 ```bash
-npm test                                 # 213 frontend simulation tests (vitest)
+npm test                                 # 255 frontend tests in 19 files (vitest)
 cd src-tauri && cargo test --lib         # 79 backend tests (db, sandbox, llm, prompts)
 ```
 

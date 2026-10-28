@@ -35,7 +35,7 @@ your PR to.
 | `src/lib/components/` | Svelte 5 components. `Pet.svelte` is the orchestrator. |
 | `src/lib/bridge/` | Typed wrapper around Tauri's `invoke`. |
 | `src/lib/events/` | In-process event bus + salience scoring. |
-| `src-tauri/src/` | Rust backend. `commands.rs` has every `#[tauri::command]`. |
+| `src-tauri/src/` | Rust backend. `commands/` has every `#[tauri::command]`, one module per domain. |
 | `src-tauri/src/db.rs` | SQLite schema + CRUD. |
 | `src-tauri/src/llm/` | LLM provider trait + Ollama implementation + prompts. |
 | `src-tauri/src/sandbox.rs` | Pet home folder + safe file IO. |

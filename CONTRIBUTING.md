@@ -71,7 +71,7 @@ fully alive pet.
 - 🧠 **Better mood/decay tuning** — keep changes small and explain the
   rationale (e.g. user-tested for 30 minutes, observed X).
 - 🔌 **New LLM providers** — implement the `LlmProvider` trait
-  (`src-tauri/src/llm/provider.rs`) and wire it into `commands.rs`. Cloud
+  (`src-tauri/src/llm/provider.rs`) and wire it into `commands/`. Cloud
   providers must respect `local_only_mode`.
 - 📚 **Documentation** — better explanations of mood thresholds, salience
   scoring, sandbox guarantees.

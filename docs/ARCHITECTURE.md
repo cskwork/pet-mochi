@@ -55,7 +55,7 @@ no Tauri, no async) and that property is non-negotiable.
 6. Schedules a debounced backend save.
 
 Why pure functions? Because the core feel of the pet is regression-tested
-without spinning up Tauri or a webview. `npm test` runs ~99 sim tests in
+without spinning up Tauri or a webview. `npm test` runs 255 frontend tests in
 under a second.
 
 ---
@@ -126,7 +126,7 @@ Retrieval ranks candidates by:
 ```
 
 So a memory the pet was 90 % sure about three weeks ago beats one it was
-30 % sure about an hour ago. See `commands.rs:search_memories`.
+30 % sure about an hour ago. See `commands/memory.rs:search_memories`.
 
 Memory **extraction** runs *only* after LLM-backed replies (best-effort,
 JSON-mode prompt). If the model returns garbage, the extraction is
