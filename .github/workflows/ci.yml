@@ -17,8 +17,8 @@ jobs:
     name: Frontend (vitest + svelte-check)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: 'npm'
@@ -30,7 +30,7 @@ jobs:
     name: Backend (cargo test)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Tauri Linux build deps
         run: |
           sudo apt-get update
@@ -44,6 +44,24 @@ jobs:
             curl \
             wget \
             file
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> src-tauri/target
+      - name: cargo test --lib
+        working-directory: src-tauri
+        run: cargo test --lib --quiet
+      - name: cargo build (debug)
+        working-directory: src-tauri
+        run: cargo build --quiet
+
+  # Compiles and tests the Windows-only code paths (autostart validation,
+  # reparse-point sandbox guards) that the Linux job never builds.
+  backend-windows:
+    name: Backend (Windows cargo test)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
