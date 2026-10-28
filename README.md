@@ -178,19 +178,43 @@ src-tauri/                 Rust backend
 │  └─ lib.rs               Tauri builder, plugin wiring, setup
 ```
 
+```mermaid
+flowchart LR
+  UI["Svelte 5 UI<br/>src/App.svelte, src/lib/components/"] --> SIM["Simulation tick every 3 s<br/>src/lib/sim/ (pure functions)"]
+  SIM -->|"salience ≥ 70"| BUS["Event bus + LLM gate<br/>src/lib/events/bus.ts"]
+  UI --> BR["Typed bridge<br/>src/lib/bridge/ (Tauri invoke)"]
+  BUS --> BR
+  BR --> CMD["Tauri commands<br/>src-tauri/src/commands/"]
+  CMD --> DB[("SQLite + FTS5 memories<br/>src-tauri/src/db.rs")]
+  CMD --> LLM["LlmProvider → Ollama<br/>src-tauri/src/llm/ (90 s cooldown)"]
+  CMD --> SB["Sandboxed pet home<br/>src-tauri/src/sandbox.rs"]
+  WATCH["Inbox watcher (notify)<br/>src-tauri/src/watcher.rs"] --> SB
+```
+
 ### Design choices worth knowing
 
 - **Simulation first.** A `runTick(state, ctx, elapsed)` pure function decides
   the pet's behavior every 3s. The LLM is consulted only when an event's
-  salience clears 70 *and* a 90-second autonomous cooldown has passed.
+  salience clears 70 *and* a 90-second autonomous cooldown has passed
+  (`src/lib/sim/salience.ts` `SALIENCE_THRESHOLD`, `src-tauri/src/commands/chat.rs`
+  `llm_autonomous` cooldown, `TICK_MS` in `src/lib/components/Pet.svelte`).
 - **Memory ranking.** FTS5 prefix search retrieves candidates; we re-rank by
   `0.4 × importance + 0.3 × recency + 0.3 × confidence` so old-but-important
-  memories beat fresh trivia.
+  memories beat fresh trivia (`src-tauri/src/db.rs`).
 - **Failure first.** The pet keeps animating when the DB is unavailable, when
   Ollama is offline, when memory extraction returns garbage JSON. Failures
   log warnings instead of bubbling up to the UI.
 - **Safety.** No `eval`, no shell, no remote skill loading. File paths are
-  canonicalized and verified to live under the sandbox before any read/write.
+  canonicalized and verified to live under the sandbox before any read/write
+  (`src-tauri/src/sandbox.rs`).
+
+### Limitations
+
+- Ollama is the only LLM provider implemented (`src-tauri/src/llm/ollama.rs`); without a running Ollama,
+  Mochi still animates and reacts but does not chat.
+- Desktop only: this is a Tauri 2 build for macOS, Windows and Linux, separate from the iOS app of the
+  same name on the App Store.
+- Memory search is keyword-based (FTS5 prefix search re-ranked by weights), not semantic.
 
 ---
 
