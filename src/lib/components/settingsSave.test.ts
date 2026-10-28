@@ -1,18 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSettingsSaver, createStatusLine, errorMessage } from "./settingsSave";
 
-type S = { a: number; b: string };
-
-function deferred<T>() {
-  let resolve!: (v: T) => void;
-  let reject!: (e: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
-}
-
 describe("errorMessage", () => {
   it("uses Tauri's rejected string as-is and Error.message otherwise", () => {
     expect(errorMessage("login item failed")).toBe("login item failed");
@@ -21,63 +9,130 @@ describe("errorMessage", () => {
   });
 });
 
-describe("createSettingsSaver", () => {
-  it("adopts the normalized echo when nothing changed meanwhile", async () => {
-    let local: S = { a: 1, b: " Mochi " };
-    const saver = createSettingsSaver<S>({
-      read: () => ({ ...local }),
-      write: (n) => (local = n),
-      send: async (s) => ({ ...s, b: s.b.trim() }),
-      onSaved: () => undefined,
+type F = { localOnly: boolean; endpoint: string; stage: string; model: string };
+
+/** Fake backend mirroring the real validation: local-only needs loopback. */
+function fakeBackend(initial: F, delay?: Promise<void>) {
+  let stored = { ...initial };
+  const sends: F[] = [];
+  const send = async (full: F): Promise<F> => {
+    sends.push({ ...full });
+    if (delay) await delay;
+    if (full.localOnly && !/^http:\/\/(localhost|127\.0\.0\.1)/.test(full.endpoint)) {
+      throw "local-only mode requires a loopback Ollama endpoint";
+    }
+    stored = { ...full, model: full.model.trim() };
+    return { ...stored };
+  };
+  return { send, sends, stored: () => stored };
+}
+
+function setup(initial: F, delay?: Promise<void>) {
+  let local: F = { ...initial };
+  let errors: Record<string, string> = {};
+  const backend = fakeBackend(initial, delay);
+  const saver = createSettingsSaver<F>({
+    read: () => ({ ...local }),
+    write: (n) => (local = n),
+    send: backend.send,
+    onSaved: () => undefined,
+    onErrors: (e) => (errors = e),
+  });
+  saver.init(initial);
+  return {
+    saver,
+    backend,
+    get local() {
+      return local;
+    },
+    set local(v: F) {
+      local = v;
+    },
+    get errors() {
+      return errors;
+    },
+  };
+}
+
+const BASE: F = { localOnly: true, endpoint: "http://localhost:11434", stage: "transparent", model: "gemma" };
+
+describe("createSettingsSaver — per-field commits", () => {
+  it("a rejected save reverts ONLY the triggering field and shows its inline error", async () => {
+    const t = setup(BASE);
+    t.local = { ...t.local, endpoint: "http://10.0.0.5:11434", model: "half-typ" }; // model not committed
+    const res = await t.saver.commit("endpoint");
+    expect(res).toEqual({
+      ok: false,
+      error: "local-only mode requires a loopback Ollama endpoint",
+      keys: ["endpoint"],
     });
-    expect(await saver.save()).toBeNull();
-    expect(local).toEqual({ a: 1, b: "Mochi" });
+    expect(t.local.endpoint).toBe(BASE.endpoint); // reverted to persisted
+    expect(t.local.model).toBe("half-typ"); // untouched
+    expect(t.errors).toEqual({ endpoint: "local-only mode requires a loopback Ollama endpoint" });
   });
 
-  it("never clobbers an edit made while the save was in flight", async () => {
-    let local: S = { a: 1, b: "x" };
-    const sends: S[] = [];
-    const pending: Array<ReturnType<typeof deferred<S>>> = [];
-    const saver = createSettingsSaver<S>({
-      read: () => ({ ...local }),
-      write: (n) => (local = n),
-      send: (s) => {
-        sends.push(s);
-        const d = deferred<S>();
-        pending.push(d);
-        return d.promise;
-      },
-      onSaved: () => undefined,
-    });
-    const first = saver.save();
-    await vi.waitFor(() => expect(sends.length).toBe(1)); // #1 is in flight
-    local = { ...local, a: 2 }; // user toggles while save #1 is in flight
-    const second = saver.save();
-    await Promise.resolve();
-    pending[0].resolve({ a: 1, b: "x" });
+  it("the next unrelated save persists (no poisoned payload)", async () => {
+    const t = setup(BASE);
+    t.local = { ...t.local, endpoint: "http://10.0.0.5:11434" };
+    await t.saver.commit("endpoint");
+    t.local = { ...t.local, stage: "cream" };
+    expect(await t.saver.commit("stage")).toEqual({ ok: true });
+    expect(t.backend.stored().stage).toBe("cream");
+    expect(t.backend.stored().endpoint).toBe(BASE.endpoint);
+    // The endpoint error stays until that field is edited or saved.
+    expect(t.errors.endpoint).toBeDefined();
+    t.saver.clearError("endpoint");
+    expect(t.errors).toEqual({});
+  });
+
+  it("turning Local-only on with a remote endpoint reverts the checkbox", async () => {
+    const t = setup({ ...BASE, localOnly: false, endpoint: "http://10.0.0.5:11434" });
+    t.local = { ...t.local, localOnly: true };
+    const res = await t.saver.commit("localOnly");
+    expect(res.ok).toBe(false);
+    expect(t.local.localOnly).toBe(false);
+    expect(t.backend.stored().localOnly).toBe(false);
+    expect(Object.keys(t.errors)).toEqual(["localOnly"]);
+  });
+
+  it("a field's inline error clears when that field next saves successfully", async () => {
+    const t = setup(BASE);
+    t.local = { ...t.local, endpoint: "http://10.0.0.5:11434" };
+    await t.saver.commit("endpoint");
+    t.local = { ...t.local, endpoint: "http://127.0.0.1:11434" };
+    expect((await t.saver.commit("endpoint")).ok).toBe(true);
+    expect(t.errors).toEqual({});
+  });
+
+  it("adopts the backend's normalized value for the committed field", async () => {
+    const t = setup(BASE);
+    t.local = { ...t.local, model: "  llama  " };
+    await t.saver.commit("model");
+    expect(t.local.model).toBe("llama");
+  });
+
+  it("a queued save never sends half-typed text from another field", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const t = setup(BASE, gate);
+    t.local = { ...t.local, stage: "cream" };
+    const first = t.saver.commit("stage"); // in flight (delayed)
+    t.local = { ...t.local, localOnly: false };
+    const second = t.saver.commit("localOnly"); // queued; value captured now
+    t.local = { ...t.local, model: "gem" }; // typing, not blurred yet
+    release();
     await first;
-    expect(local.a).toBe(2); // stale echo not adopted
-    await vi.waitFor(() => expect(sends.length).toBe(2));
-    expect(sends.map((s) => s.a)).toEqual([1, 2]); // serialized, newest sent
-    pending[1].resolve({ a: 2, b: "x" });
     await second;
-    expect(local).toEqual({ a: 2, b: "x" });
+    expect(t.backend.sends.map((x) => x.model)).toEqual(["gemma", "gemma"]);
+    expect(t.backend.sends[1]).toMatchObject({ stage: "cream", localOnly: false });
+    expect(t.local.model).toBe("gem"); // the typing survives both echoes
   });
 
-  it("returns the backend's message on failure and keeps local values intact", async () => {
-    let local: S = { a: 1, b: "http://10.0.0.5:11434" };
-    const onSaved = vi.fn();
-    const saver = createSettingsSaver<S>({
-      read: () => ({ ...local }),
-      write: (n) => (local = n),
-      send: () => Promise.reject("local-only mode requires a loopback endpoint"),
-      onSaved,
-    });
-    expect(await saver.save()).toBe("local-only mode requires a loopback endpoint");
-    expect(local).toEqual({ a: 1, b: "http://10.0.0.5:11434" });
-    expect(onSaved).not.toHaveBeenCalled();
-    // A later save still runs after a failure.
-    expect(await saver.save()).toBe("local-only mode requires a loopback endpoint");
+  it("the Save button commits every dirty field", async () => {
+    const t = setup(BASE);
+    t.local = { ...t.local, stage: "mint", model: "qwen" };
+    expect((await t.saver.commitDirty()).ok).toBe(true);
+    expect(t.backend.stored()).toMatchObject({ stage: "mint", model: "qwen" });
   });
 });
 

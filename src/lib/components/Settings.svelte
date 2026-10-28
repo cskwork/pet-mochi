@@ -17,7 +17,12 @@
     SKIN_LABELS,
     SKIN_SWATCHES,
   } from "./appearance";
-  import { createSettingsSaver, createStatusLine, errorMessage } from "./settingsSave";
+  import {
+    createSettingsSaver,
+    createStatusLine,
+    errorMessage,
+    type FieldErrors,
+  } from "./settingsSave";
 
   let settings = $state<Settings | null>(null);
   let memories = $state<Memory[]>([]);
@@ -31,16 +36,24 @@
   let savingMessage = $state("");
   // One timer for the status line: a newer message cancels the older clear.
   const status = createStatusLine((m) => (savingMessage = m));
-  // Inline, next to the checkbox (the global status sits far below it).
-  let startOnLoginError = $state<string | null>(null);
+  // Per-field inline save errors, shown next to the control that failed
+  // (the global status line sits far below the fold).
+  let fieldErrors = $state<FieldErrors>({});
   const saver = createSettingsSaver<Settings>({
     read: () => (settings ? $state.snapshot(settings) : null),
     write: (next) => (settings = next),
-    send: (snapshot) => api.saveSettings(snapshot),
+    send: (full) => api.saveSettings(full),
     // REQ-113 — broadcast the persisted values so the pet overlay follows
     // live. Best-effort.
     onSaved: (echo) => void emit("settings:changed", echo).catch(() => undefined),
+    onErrors: (errs) => (fieldErrors = errs),
   });
+
+  /** aria-describedby for a control: its static hints plus its inline error. */
+  function describe(key: string, ...extra: string[]): string | undefined {
+    const ids = fieldErrors[key] ? [...extra, `err-${key}`] : extra;
+    return ids.length ? ids.join(" ") : undefined;
+  }
   let exportPath = $state<string | null>(null);
   let activeTab = $state<"general" | "memory" | "sandbox" | "developer">("general");
   let loadError = $state<string | null>(null);
@@ -64,6 +77,7 @@
         api.listStatusReports(10),
       ]);
       settings = s;
+      saver.init(s);
       memories = m;
       inbox = ix;
       events = ev;
@@ -112,29 +126,29 @@
     };
   });
 
-  /** Save (serialized) and broadcast. Every checkbox/select saves on change
-   *  and every text input on change/blur; the Save button is a fallback.
-   *  Resolves to null on success or the backend's error message. */
-  async function save(): Promise<string | null> {
-    if (!settings) return "settings not loaded";
-    status.show("saving…");
-    const err = await saver.save();
-    if (err === null) status.show("saved ✓", 2_000);
-    else status.show(`error: ${err}`, 5_000);
-    return err;
+  /** Report a save outcome on the global line. Field failures are already
+   *  announced inline (role=alert there), so the global line stays a polite
+   *  status and never alerts a second time. */
+  function reportSave(res: Awaited<ReturnType<typeof saver.commit>>) {
+    if (res.ok) status.show("saved ✓", 2_000);
+    else if (res.keys.length > 0) status.show("not saved — see the field marked above", 5_000);
+    else status.show(`error: ${res.error}`, 5_000);
   }
 
-  /** The backend registers/unregisters a real login item on save; if that
-   *  fails, show its message inline and put the checkbox back. */
-  async function onStartOnLoginChange() {
+  /** Every checkbox/select saves on change and every text input on
+   *  change/blur, committing just that field (values captured now). A
+   *  rejected field reverts to its persisted value with an inline error. */
+  async function saveFields(...keys: (keyof Settings & string)[]) {
     if (!settings) return;
-    const wanted = settings.startOnLogin;
-    startOnLoginError = null;
-    const err = await save();
-    if (err !== null && settings) {
-      startOnLoginError = err;
-      settings = { ...settings, startOnLogin: !wanted };
-    }
+    status.show("saving…");
+    reportSave(await saver.commit(...keys));
+  }
+
+  /** Save button fallback: commit everything that differs from persisted. */
+  async function saveAll() {
+    if (!settings) return;
+    status.show("saving…");
+    reportSave(await saver.commitDirty());
   }
 
   async function saveApiKey() {
@@ -142,6 +156,7 @@
     try {
       const isSet = await api.setCloudApiKey(pendingApiKey || null);
       settings = { ...settings, cloudApiKeySet: isSet };
+      saver.acknowledge({ cloudApiKeySet: isSet });
       pendingApiKey = "";
       status.show(isSet ? "key saved ✓" : "key cleared ✓", 2_000);
     } catch (e) {
@@ -154,6 +169,7 @@
     try {
       await api.setCloudApiKey(null);
       settings = { ...settings, cloudApiKeySet: false };
+      saver.acknowledge({ cloudApiKeySet: false });
       pendingApiKey = "";
     } catch (e) {
       showError("clear key", e);
@@ -259,6 +275,12 @@
   }
 </script>
 
+{#snippet fieldError(key: string)}
+  {#if fieldErrors[key]}
+    <p class="inline-error" id={`err-${key}`} role="alert">Not saved: {fieldErrors[key]}</p>
+  {/if}
+{/snippet}
+
 <main class="settings">
   <header>
     <h1>🍡 Mochi</h1>
@@ -319,14 +341,19 @@
       <section id="panel-general" role="tabpanel" aria-labelledby="tab-general">
         <label>
           Pet name
-          <input bind:value={settings.petName} onchange={save} maxlength="24" />
+          <input bind:value={settings.petName} onchange={() => saveFields("petName")}
+            oninput={() => saver.clearError("petName")}
+            aria-invalid={fieldErrors.petName ? "true" : undefined}
+            aria-describedby={describe("petName")} maxlength="24" />
         </label>
+        {@render fieldError("petName")}
         <label>
           Personality
           <select
             bind:value={settings.personalityPreset}
-            onchange={save}
-            aria-describedby="personality-help"
+            onchange={() => saveFields("personalityPreset")}
+            aria-invalid={fieldErrors.personalityPreset ? "true" : undefined}
+            aria-describedby={describe("personalityPreset", "personality-help")}
           >
             <option value="curious">curious</option>
             <option value="lazy">lazy</option>
@@ -338,6 +365,7 @@
             Playful hops, roams and fidgets more · Quiet stays calm and nudges less.
           </span>
         </label>
+        {@render fieldError("personalityPreset")}
 
         <fieldset>
           <legend>Appearance</legend>
@@ -349,12 +377,20 @@
               max="1.5"
               step="0.05"
               bind:value={settings.petScale}
-              onchange={save}
+              onchange={() => saveFields("petScale")}
+            aria-invalid={fieldErrors.petScale ? "true" : undefined}
+            aria-describedby={describe("petScale")}
               aria-valuetext={`${Math.round(settings.petScale * 100)} percent`}
             />
             <span>{Math.round(settings.petScale * 100)}%</span>
           </label>
-          <div class="skin-group" role="radiogroup" aria-labelledby="skin-label">
+        {@render fieldError("petScale")}
+          <div
+            class="skin-group"
+            role="radiogroup"
+            aria-labelledby="skin-label"
+            aria-describedby={describe("petSkin")}
+          >
             <span class="group-label" id="skin-label">Skin</span>
             <div class="swatches">
               {#each PET_SKINS as skin (skin)}
@@ -364,7 +400,7 @@
                     name="pet-skin"
                     value={skin}
                     bind:group={settings.petSkin}
-                    onchange={save}
+                    onchange={() => saveFields("petSkin")}
                     aria-label={`${SKIN_LABELS[skin]} skin`}
                   />
                   <span
@@ -377,35 +413,50 @@
               {/each}
             </div>
           </div>
+          {@render fieldError("petSkin")}
           <label>
             Accessory
-            <select bind:value={settings.petAccessory} onchange={save}>
+            <select bind:value={settings.petAccessory} onchange={() => saveFields("petAccessory")}
+            aria-invalid={fieldErrors.petAccessory ? "true" : undefined}
+            aria-describedby={describe("petAccessory")}>
               {#each PET_ACCESSORIES as acc (acc)}
                 <option value={acc}>{ACCESSORY_LABELS[acc]}</option>
               {/each}
             </select>
           </label>
+        {@render fieldError("petAccessory")}
           <span class="hint">Applies to the pet window immediately.</span>
         </fieldset>
         <label>
           LLM provider
-          <select bind:value={settings.llmProvider} onchange={save}>
+          <select bind:value={settings.llmProvider} onchange={() => saveFields("llmProvider")}
+            aria-invalid={fieldErrors.llmProvider ? "true" : undefined}
+            aria-describedby={describe("llmProvider")}>
             <option value="ollama">Ollama (local)</option>
             <option value="none">None — silent mode</option>
           </select>
         </label>
+        {@render fieldError("llmProvider")}
         <label>
           Ollama endpoint
           <input
             bind:value={settings.ollamaEndpoint}
-            onchange={save}
+            onchange={() => saveFields("ollamaEndpoint")}
+            oninput={() => saver.clearError("ollamaEndpoint")}
+            aria-invalid={fieldErrors.ollamaEndpoint ? "true" : undefined}
+            aria-describedby={describe("ollamaEndpoint")}
             placeholder="http://localhost:11434"
           />
         </label>
+        {@render fieldError("ollamaEndpoint")}
         <label>
           Ollama model
-          <input bind:value={settings.ollamaModel} onchange={save} placeholder="gemma4:e2b" />
+          <input bind:value={settings.ollamaModel} onchange={() => saveFields("ollamaModel")}
+            oninput={() => saver.clearError("ollamaModel")}
+            aria-invalid={fieldErrors.ollamaModel ? "true" : undefined}
+            aria-describedby={describe("ollamaModel")} placeholder="gemma4:e2b" />
         </label>
+        {@render fieldError("ollamaModel")}
 
         <fieldset>
           <legend>Cloud API key (write-only)</legend>
@@ -428,47 +479,62 @@
         </fieldset>
 
         <label class="row">
-          <input type="checkbox" bind:checked={settings.localOnlyMode} onchange={save} />
+          <input type="checkbox" bind:checked={settings.localOnlyMode} onchange={() => saveFields("localOnlyMode")}
+            aria-invalid={fieldErrors.localOnlyMode ? "true" : undefined}
+            aria-describedby={describe("localOnlyMode")} />
           Local-only mode (block any cloud calls)
         </label>
+        {@render fieldError("localOnlyMode")}
         <label class="row">
-          <input type="checkbox" bind:checked={settings.autonomousSpeech} onchange={save} />
+          <input type="checkbox" bind:checked={settings.autonomousSpeech} onchange={() => saveFields("autonomousSpeech")}
+            aria-invalid={fieldErrors.autonomousSpeech ? "true" : undefined}
+            aria-describedby={describe("autonomousSpeech")} />
           Allow autonomous chat bubbles
         </label>
+        {@render fieldError("autonomousSpeech")}
         <label class="row">
-          <input type="checkbox" bind:checked={settings.soundEffects} onchange={save} />
+          <input type="checkbox" bind:checked={settings.soundEffects} onchange={() => saveFields("soundEffects")}
+            aria-invalid={fieldErrors.soundEffects ? "true" : undefined}
+            aria-describedby={describe("soundEffects")} />
           Sound effects (tiny chirps on feed/pat/play — Mochi never beeps on her own)
         </label>
+        {@render fieldError("soundEffects")}
         <label class="row">
           <input
             type="checkbox"
             bind:checked={settings.desktopNotifications}
-            onchange={save}
+            onchange={() => saveFields("desktopNotifications")}
+            aria-invalid={fieldErrors.desktopNotifications ? "true" : undefined}
+            aria-describedby={describe("desktopNotifications")}
           />
           Desktop notifications (critical needs only)
         </label>
+        {@render fieldError("desktopNotifications")}
         <label class="row">
-          <input type="checkbox" bind:checked={settings.memoryEnabled} onchange={save} />
+          <input type="checkbox" bind:checked={settings.memoryEnabled} onchange={() => saveFields("memoryEnabled")}
+            aria-invalid={fieldErrors.memoryEnabled ? "true" : undefined}
+            aria-describedby={describe("memoryEnabled")} />
           Memory enabled
         </label>
+        {@render fieldError("memoryEnabled")}
         <label class="row">
-          <input type="checkbox" bind:checked={settings.alwaysOnTop} onchange={save} />
+          <input type="checkbox" bind:checked={settings.alwaysOnTop} onchange={() => saveFields("alwaysOnTop")}
+            aria-invalid={fieldErrors.alwaysOnTop ? "true" : undefined}
+            aria-describedby={describe("alwaysOnTop")} />
           Always on top
         </label>
+        {@render fieldError("alwaysOnTop")}
         <label class="row">
           <input
             type="checkbox"
             bind:checked={settings.startOnLogin}
-            onchange={onStartOnLoginChange}
-            aria-describedby={startOnLoginError ? "start-on-login-error" : undefined}
+            onchange={() => saveFields("startOnLogin")}
+            aria-invalid={fieldErrors.startOnLogin ? "true" : undefined}
+            aria-describedby={describe("startOnLogin")}
           />
           Start on login
         </label>
-        {#if startOnLoginError}
-          <p class="inline-error" id="start-on-login-error" role="alert">
-            Couldn't change start on login: {startOnLoginError}
-          </p>
-        {/if}
+        {@render fieldError("startOnLogin")}
         <label>
           Animation intensity
           <input
@@ -477,13 +543,18 @@
             max="1.5"
             step="0.1"
             bind:value={settings.animationIntensity}
-            onchange={save}
+            onchange={() => saveFields("animationIntensity")}
+            aria-invalid={fieldErrors.animationIntensity ? "true" : undefined}
+            aria-describedby={describe("animationIntensity")}
           />
           <span>{settings.animationIntensity.toFixed(1)}× {settings.animationIntensity === 0 ? "(particles & quirks off)" : ""}</span>
         </label>
+        {@render fieldError("animationIntensity")}
         <label>
           Stage background
-          <select bind:value={settings.stageBackground} onchange={save}>
+          <select bind:value={settings.stageBackground} onchange={() => saveFields("stageBackground")}
+            aria-invalid={fieldErrors.stageBackground ? "true" : undefined}
+            aria-describedby={describe("stageBackground")}>
             <option value="transparent">Fully transparent (desktop overlay)</option>
             <option value="auto">Auto (follows time of day)</option>
             <option value="cream">Cream card</option>
@@ -493,6 +564,7 @@
           </select>
           <span class="hint">Applies to the pet window immediately.</span>
         </label>
+        {@render fieldError("stageBackground")}
         <label>
           Pet home folder
           <!-- Read-only: the backend reports the real path and ignores writes. -->
@@ -508,11 +580,14 @@
           </span>
         </label>
         <label class="row">
-          <input type="checkbox" bind:checked={settings.developerEventLog} onchange={save} />
+          <input type="checkbox" bind:checked={settings.developerEventLog} onchange={() => saveFields("developerEventLog")}
+            aria-invalid={fieldErrors.developerEventLog ? "true" : undefined}
+            aria-describedby={describe("developerEventLog")} />
           Developer event log
         </label>
+        {@render fieldError("developerEventLog")}
         <div class="actions">
-          <button onclick={() => void save()}>Save</button>
+          <button onclick={() => void saveAll()}>Save</button>
           <span class="status" role={savingMessage.startsWith("error") ? "alert" : "status"} aria-live="polite">{savingMessage}</span>
         </div>
       </section>
